@@ -172,13 +172,11 @@ public class ScanCommand implements Callable<Integer> {
             System.out.printf("%nSubnet scan complete in %.2f seconds — %d hosts scanned, %d with open ports%n",
                     subnetReport.getDurationMs() / 1000.0, subnetReport.getHostsScanned(), subnetReport.getHostsWithOpenPorts());
             subnetReport.getHostReports().forEach(r -> {
-                if (r.getOpenCount() > 0) {
-                    System.out.printf("%n  Host: %s (%s) — %d open ports%n",
-                            r.getHost(), r.getResolvedIp(), r.getOpenCount());
-                    r.getOpenPorts().forEach(p ->
-                            System.out.printf("    %-6d %s%n", p.getPort(),
-                                    p.getServiceName() != null ? p.getServiceName() : "Unknown"));
-                }
+                System.out.printf("%n  Host: %s (%s) — %d open ports%n",
+                        r.getHost(), r.getResolvedIp(), r.getOpenCount());
+                r.getOpenPorts().forEach(p ->
+                        System.out.printf("    %-6d %s%n", p.getPort(),
+                                p.getServiceName() != null ? p.getServiceName() : "Unknown"));
             });
             return 0;
         }

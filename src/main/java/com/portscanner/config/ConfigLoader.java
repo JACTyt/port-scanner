@@ -19,7 +19,8 @@ public class ConfigLoader {
         if (!Files.exists(configPath)) return new ScannerConfig();
         try {
             ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
-            return mapper.readValue(configPath.toFile(), ScannerConfig.class);
+            ScannerConfig result = mapper.readValue(configPath.toFile(), ScannerConfig.class);
+            return result != null ? result : new ScannerConfig(); // null when file is all-comments
         } catch (IOException e) {
             System.err.println("Warning: could not read config file " + CONFIG_FILE + " — " + e.getMessage());
             return new ScannerConfig();
