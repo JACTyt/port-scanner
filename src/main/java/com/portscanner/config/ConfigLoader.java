@@ -11,8 +11,8 @@ public class ConfigLoader {
     private static final String CONFIG_FILE = System.getProperty("user.dir") + "/config.yaml";
 
     /**
-     * Loads config from ~/.portscanner/config.yaml.
-     * Returns an empty ScannerConfig (all nulls) if the file does not exist.
+     * Loads config from config.yaml in the current working directory (next to the JAR).
+     * Returns an empty ScannerConfig (all nulls) if the file does not exist or is empty.
      */
     public static ScannerConfig load() {
         Path configPath = Path.of(CONFIG_FILE);
@@ -28,7 +28,7 @@ public class ConfigLoader {
     }
 
     /**
-     * Creates ~/.portscanner/ and writes a sample config.yaml if none exists.
+     * Writes a sample config.yaml in the current working directory if none exists.
      */
     public static void createSampleIfAbsent() {
         Path file = Path.of(CONFIG_FILE);
