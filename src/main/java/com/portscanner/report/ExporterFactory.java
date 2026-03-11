@@ -10,6 +10,10 @@ public class ExporterFactory {
             return new JsonExporter(objectMapper);
         } else if (lower.endsWith(".csv")) {
             return new CsvExporter();
+        } else if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+            return new HtmlExporter();
+        } else if (lower.endsWith(".xml")) {
+            return new XmlExporter();
         } else {
             return new TextExporter();
         }

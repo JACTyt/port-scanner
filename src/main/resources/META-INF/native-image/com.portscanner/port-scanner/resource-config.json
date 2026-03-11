@@ -1,0 +1,8 @@
+{
+  "resources": {
+    "includes": [
+      { "pattern": "services.json" },
+      { "pattern": "logback.xml" }
+    ]
+  }
+}

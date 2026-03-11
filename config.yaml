@@ -1,0 +1,9 @@
+# Port Scanner configuration (config.yaml — place next to the JAR)
+# All settings are optional. CLI flags always override these values.
+#
+# timeout: 200       # connection timeout in ms (50-5000)
+# threads: 100       # thread pool size (max 200)
+# ports: 1-1024      # default port range
+# banner: false      # enable banner grabbing by default
+# showAll: false     # show all ports including closed
+# outputDir: ~/scans # default directory for report files

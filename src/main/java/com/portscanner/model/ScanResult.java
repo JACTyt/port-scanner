@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -17,4 +19,5 @@ public class ScanResult {
     private String serviceName;
     private String banner;
     private long responseTimeMs;
+    private List<String> cves;
 }

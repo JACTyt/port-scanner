@@ -1,5 +1,5 @@
 package com.portscanner.model;
 
 public enum PortStatus {
-    OPEN, CLOSED, FILTERED, ERROR
+    OPEN, OPEN_FILTERED, CLOSED, FILTERED, ERROR
 }

@@ -4,6 +4,8 @@ import com.portscanner.model.PortStatus;
 import com.portscanner.model.ScanReport;
 import com.portscanner.model.ScanResult;
 import com.portscanner.service.ServiceMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.ConnectException;
 import java.net.InetAddress;
@@ -13,6 +15,7 @@ import java.net.SocketTimeoutException;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -22,18 +25,26 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class PortScanner {
 
+    private static final Logger log = LoggerFactory.getLogger(PortScanner.class);
+
     private final int threadCount;
     private final int timeoutMs;
     private final boolean grabBanner;
     private final ServiceMapper serviceMapper;
     private final BannerGrabber bannerGrabber;
+    private final RateLimiter rateLimiter;
 
     public PortScanner(int threadCount, int timeoutMs, boolean grabBanner, ServiceMapper serviceMapper) {
+        this(threadCount, timeoutMs, grabBanner, serviceMapper, false, 0);
+    }
+
+    public PortScanner(int threadCount, int timeoutMs, boolean grabBanner, ServiceMapper serviceMapper, boolean useProbes, int ratePerSecond) {
         this.threadCount = threadCount;
         this.timeoutMs = timeoutMs;
         this.grabBanner = grabBanner;
         this.serviceMapper = serviceMapper;
-        this.bannerGrabber = new BannerGrabber();
+        this.bannerGrabber = new BannerGrabber(useProbes);
+        this.rateLimiter = ratePerSecond > 0 ? new RateLimiter(ratePerSecond) : null;
     }
 
     public ScanResult scanPort(String host, int port) {
@@ -66,16 +77,26 @@ public class PortScanner {
         LocalDateTime scannedAt = LocalDateTime.now();
         long startTime = System.currentTimeMillis();
 
-        int poolSize = Math.min(threadCount, Math.max(1, ports.length));
-        ExecutorService executor = Executors.newFixedThreadPool(poolSize);
-        List<Future<ScanResult>> futures = new ArrayList<>(ports.length);
-        AtomicInteger scanned = new AtomicInteger(0);
-        int total = ports.length;
+        // Shuffle port order when rate limiting is active (stealth mode)
+        List<Integer> portList = new ArrayList<>(ports.length);
+        for (int p : ports) portList.add(p);
+        if (rateLimiter != null) Collections.shuffle(portList);
 
-        for (int port : ports) {
+        int poolSize = Math.min(threadCount, Math.max(1, portList.size()));
+        ExecutorService executor = Executors.newFixedThreadPool(poolSize);
+        List<Future<ScanResult>> futures = new ArrayList<>(portList.size());
+        AtomicInteger scanned = new AtomicInteger(0);
+        int total = portList.size();
+
+        for (int port : portList) {
+            if (rateLimiter != null) rateLimiter.acquire();
             futures.add(executor.submit(() -> {
                 ScanResult result = scanPort(host, port);
-                System.err.printf("\rScanning... %d/%d ports", scanned.incrementAndGet(), total);
+                int count = scanned.incrementAndGet();
+                if (count % 100 == 0 || count == total) {
+                    log.debug("Scanning... {}/{} ports", count, total);
+                }
+                System.err.printf("\rScanning... %d/%d ports", count, total);
                 return result;
             }));
         }
@@ -92,7 +113,7 @@ public class PortScanner {
                     filteredPorts.add(result);
                 }
             } catch (Exception e) {
-                // Skip futures that timed out or were interrupted
+                log.debug("Future timed out or interrupted: {}", e.getMessage());
             }
         }
 
@@ -100,6 +121,7 @@ public class PortScanner {
         executor.shutdown();
 
         long durationMs = System.currentTimeMillis() - startTime;
+        log.info("Scan complete: {} ports scanned, {} open, {} filtered", total, openPorts.size(), filteredPorts.size());
 
         return ScanReport.builder()
                 .host(host)

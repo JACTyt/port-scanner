@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <pattern>%d{HH:mm:ss} [%-5level] %logger{20} - %msg%n</pattern>
+        </encoder>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>INFO</level>
+        </filter>
+    </appender>
+
+    <!-- Root level controlled via -Dlogging.level=DEBUG or the verbose flag -->
+    <root level="${logging.level:-WARN}">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+    <logger name="com.portscanner" level="${logging.level:-INFO}"/>
+    <logger name="com.fasterxml" level="WARN"/>
+</configuration>

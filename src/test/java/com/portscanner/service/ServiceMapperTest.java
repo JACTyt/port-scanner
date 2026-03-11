@@ -34,8 +34,8 @@ class ServiceMapperTest {
 
     @Test
     void getService_unknownPort_returnsUnknown() {
-        assertEquals("Unknown", mapper.getService(9999));
-        assertEquals("Unknown", mapper.getService(11111));
+        assertEquals("Unknown", mapper.getService(19999));
+        assertEquals("Unknown", mapper.getService(29999));
     }
 
     @Test
@@ -47,7 +47,7 @@ class ServiceMapperTest {
 
     @Test
     void isKnown_unknownPort_returnsFalse() {
-        assertFalse(mapper.isKnown(9999));
-        assertFalse(mapper.isKnown(11111));
+        assertFalse(mapper.isKnown(19999));
+        assertFalse(mapper.isKnown(29999));
     }
 }

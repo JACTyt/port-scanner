@@ -10,18 +10,15 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @Data
-@Builder(toBuilder = true)
+@Builder
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class ScanReport {
-    private String host;
-    private String resolvedIp;
+public class SubnetReport {
+    private String subnet;
     private LocalDateTime scannedAt;
     private long durationMs;
-    private int totalScanned;
-    private int openCount;
-    private int filteredCount;
-    private List<ScanResult> openPorts;
-    private List<ScanResult> filteredPorts;
+    private int hostsScanned;
+    private int hostsWithOpenPorts;
+    private List<ScanReport> hostReports;
 }
