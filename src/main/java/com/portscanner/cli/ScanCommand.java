@@ -93,7 +93,7 @@ public class ScanCommand implements Callable<Integer> {
     @Option(names = {"--diff"}, description = "Compare current scan against a previous JSON report file")
     private String diffFile;
 
-    @Option(names = {"--show-all"}, description = "Include closed ports in output (not recommended for large ranges)")
+    @Option(names = {"--show-all"}, description = "Include closed/filtered ports in output. Not recommended for large ranges (adds thousands of lines)")
     private boolean showAll;
 
     @Option(names = {"--no-color"}, description = "Disable ANSI color output")
@@ -165,6 +165,22 @@ public class ScanCommand implements Callable<Integer> {
 
         // ── SUBNET mode ─────────────────────────────────────────────────────
         if (subnet != null) {
+            // Ethical confirmation for non-local subnets
+            String subnetBase = subnet.contains("/") ? subnet.split("/")[0] : subnet;
+            InetAddress subnetAddr = InetAddress.getByName(subnetBase);
+            boolean isLocalSubnet = subnetAddr.isLoopbackAddress() || subnetAddr.isSiteLocalAddress();
+            if (!isLocalSubnet) {
+                System.out.println("WARNING: You are about to scan a non-local subnet: " + subnet);
+                System.out.println("Scanning systems without explicit written authorization may be illegal.");
+                System.out.print("Do you have explicit authorization to scan this subnet? [yes/no]: ");
+                Scanner inputScanner = new Scanner(System.in);
+                String confirmation = inputScanner.nextLine().trim().toLowerCase();
+                if (!confirmation.equals("yes")) {
+                    System.out.println("Scan cancelled.");
+                    return 0;
+                }
+            }
+
             System.out.println(color(String.format("@|bold,cyan Scanning subnet|@ @|green %s|@ — %d ports, %d threads, %dms timeout",
                     subnet, ports.length, threads, timeout)));
             CidrScanner cidrScanner = new CidrScanner(threads, timeout, grabBanner, serviceMapper);
@@ -273,7 +289,7 @@ public class ScanCommand implements Callable<Integer> {
         }
 
         // ── Print summary ───────────────────────────────────────────────────
-        printSummary(report);
+        printSummary(report, showAll);
 
         // ── Diff mode ───────────────────────────────────────────────────────
         if (diffFile != null) {
@@ -298,7 +314,7 @@ public class ScanCommand implements Callable<Integer> {
         return 0;
     }
 
-    private void printSummary(ScanReport report) {
+    private void printSummary(ScanReport report, boolean showAll) {
         System.out.println(color(String.format(
                 "%n@|bold,cyan Scan complete|@ in @|yellow %.2f|@ seconds — @|green %d open|@, @|yellow %d filtered|@ out of @|white %d|@ scanned%n",
                 report.getDurationMs() / 1000.0, report.getOpenCount(), report.getFilteredCount(), report.getTotalScanned())));
@@ -318,6 +334,15 @@ public class ScanCommand implements Callable<Integer> {
             });
         } else {
             System.out.println(color("@|yellow No open ports found.|@"));
+        }
+
+        if (showAll && report.getFilteredPorts() != null && !report.getFilteredPorts().isEmpty()) {
+            System.out.println(color("\n@|bold Filtered ports:|@"));
+            report.getFilteredPorts().forEach(r -> {
+                System.out.println(color(String.format("@|yellow %-8d|@ %-16s @|yellow FILTERED|@",
+                        r.getPort(),
+                        r.getServiceName() != null ? r.getServiceName() : "Unknown")));
+            });
         }
     }
 

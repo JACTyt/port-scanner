@@ -33,6 +33,7 @@ public class PortScanner {
     private final ServiceMapper serviceMapper;
     private final BannerGrabber bannerGrabber;
     private final RateLimiter rateLimiter;
+    private final int ratePerSecond;
 
     public PortScanner(int threadCount, int timeoutMs, boolean grabBanner, ServiceMapper serviceMapper) {
         this(threadCount, timeoutMs, grabBanner, serviceMapper, false, 0);
@@ -45,6 +46,7 @@ public class PortScanner {
         this.serviceMapper = serviceMapper;
         this.bannerGrabber = new BannerGrabber(useProbes);
         this.rateLimiter = ratePerSecond > 0 ? new RateLimiter(ratePerSecond) : null;
+        this.ratePerSecond = ratePerSecond;
     }
 
     public ScanResult scanPort(String host, int port) {
@@ -104,9 +106,14 @@ public class PortScanner {
         List<ScanResult> openPorts = new ArrayList<>();
         List<ScanResult> filteredPorts = new ArrayList<>();
 
+        long maxQueueDelayMs = 0L;
+        if (rateLimiter != null && ratePerSecond > 0) {
+            maxQueueDelayMs = Math.min((long) portList.size() * 1000L / ratePerSecond, 60_000L);
+        }
+
         for (Future<ScanResult> future : futures) {
             try {
-                ScanResult result = future.get(timeoutMs + 500L, TimeUnit.MILLISECONDS);
+                ScanResult result = future.get(timeoutMs + 500L + maxQueueDelayMs, TimeUnit.MILLISECONDS);
                 if (result.getStatus() == PortStatus.OPEN) {
                     openPorts.add(result);
                 } else if (result.getStatus() == PortStatus.FILTERED) {
