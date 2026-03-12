@@ -34,6 +34,11 @@ public class CidrScanner {
     }
 
     public SubnetReport scan(String cidr, int[] ports) throws Exception {
+        // Route IPv6 CIDRs to the dedicated enumerator
+        if (IPv6CidrEnumerator.isIPv6Cidr(cidr)) {
+            return scanIPv6(cidr, ports);
+        }
+
         LocalDateTime scannedAt = LocalDateTime.now();
         long startTime = System.currentTimeMillis();
 
@@ -101,6 +106,55 @@ public class CidrScanner {
                 .durationMs(durationMs)
                 .hostsScanned(aliveHosts.size())
                 .hostsWithOpenPorts(hostsWithOpen)
+                .hostReports(hostReports)
+                .build();
+    }
+
+    private SubnetReport scanIPv6(String cidr, int[] ports) throws Exception {
+        LocalDateTime scannedAt = LocalDateTime.now();
+        long startTime = System.currentTimeMillis();
+
+        List<String> allHosts = IPv6CidrEnumerator.enumerate(cidr);
+        System.out.printf("Subnet %s (IPv6): discovering %d hosts (capped at %d)...%n",
+                cidr, allHosts.size(), IPv6CidrEnumerator.MAX_HOSTS);
+
+        HostDiscovery discovery = new HostDiscovery(Math.min(timeoutMs, 1000), threadCount);
+        List<String> aliveHosts = discovery.discoverHosts(allHosts);
+        System.out.printf("Found %d alive IPv6 hosts. Scanning ports...%n", aliveHosts.size());
+
+        List<ScanReport> hostReports = new CopyOnWriteArrayList<>();
+        AtomicInteger hostsWithOpenAtomic = new AtomicInteger(0);
+
+        try (ExecutorService hostExecutor = Executors.newVirtualThreadPerTaskExecutor()) {
+            Semaphore hostLimit = new Semaphore(Math.min(threadCount, 1000));
+            List<Future<?>> hostFutures = new ArrayList<>();
+            for (String ip : aliveHosts) {
+                hostFutures.add(hostExecutor.submit(() -> {
+                    hostLimit.acquire();
+                    try {
+                        InetAddress addr = InetAddress.getByName(ip);
+                        PortScanner scanner = new PortScanner(threadCount, timeoutMs, grabBanner, serviceMapper);
+                        ScanReport report = scanner.scan(ip, addr, ports);
+                        hostReports.add(report);
+                        if (report.getOpenCount() > 0) hostsWithOpenAtomic.incrementAndGet();
+                    } finally {
+                        hostLimit.release();
+                    }
+                    return null;
+                }));
+            }
+            for (Future<?> f : hostFutures) {
+                try { f.get(); } catch (Exception ignored) {}
+            }
+        }
+
+        long durationMs = System.currentTimeMillis() - startTime;
+        return SubnetReport.builder()
+                .subnet(cidr)
+                .scannedAt(scannedAt)
+                .durationMs(durationMs)
+                .hostsScanned(aliveHosts.size())
+                .hostsWithOpenPorts(hostsWithOpenAtomic.get())
                 .hostReports(hostReports)
                 .build();
     }

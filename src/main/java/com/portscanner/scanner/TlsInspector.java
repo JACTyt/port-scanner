@@ -8,6 +8,8 @@ import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.Socket;
 import java.security.cert.X509Certificate;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -25,10 +27,15 @@ public class TlsInspector {
     private static final List<String> DEPRECATED_PROTOCOLS = List.of("TLSv1", "TLSv1.1", "SSLv3");
 
     public static Optional<TlsInfo> inspect(String host, int port, int timeoutMs) {
+        return inspect(host, port, timeoutMs, Proxy.NO_PROXY);
+    }
+
+    public static Optional<TlsInfo> inspect(String host, int port, int timeoutMs, Proxy proxy) {
         try {
             SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-            try (SSLSocket sslSocket = (SSLSocket) factory.createSocket()) {
-                sslSocket.connect(new InetSocketAddress(host, port), timeoutMs);
+            Socket plainSocket = new Socket(proxy != null ? proxy : Proxy.NO_PROXY);
+            plainSocket.connect(new InetSocketAddress(host, port), timeoutMs);
+            try (SSLSocket sslSocket = (SSLSocket) factory.createSocket(plainSocket, host, port, true)) {
                 sslSocket.setSoTimeout(timeoutMs);
                 sslSocket.startHandshake();
 

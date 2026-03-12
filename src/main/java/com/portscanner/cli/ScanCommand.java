@@ -8,17 +8,25 @@ import com.portscanner.config.ConfigLoader;
 import com.portscanner.config.ScannerConfig;
 import com.portscanner.config.ScanTimingConfig;
 import com.portscanner.config.TimingProfile;
+import com.portscanner.plugin.PluginContext;
+import com.portscanner.plugin.PluginRegistry;
+import com.portscanner.plugin.ScanPlugin;
 import com.portscanner.model.AsnInfo;
 import com.portscanner.model.GeoLocation;
 import com.portscanner.model.ScanReport;
 import com.portscanner.model.ScanResult;
+import com.portscanner.model.SubdomainResult;
 import com.portscanner.model.ThreatInfo;
+import com.portscanner.model.TracerouteHop;
+import com.portscanner.scanner.Traceroute;
 import com.portscanner.report.DiffReport;
 import com.portscanner.report.ExporterFactory;
 import com.portscanner.report.ReportDiffer;
 import com.portscanner.report.ReportExporter;
 import com.portscanner.scanner.CidrScanner;
+import com.portscanner.scanner.DnsBruteForcer;
 import com.portscanner.scanner.HostDiscovery;
+import com.portscanner.scanner.NetworkInterfaceScanner;
 import com.portscanner.scanner.HttpInspector;
 import com.portscanner.scanner.NioPortScanner;
 import com.portscanner.scanner.PortScanner;
@@ -30,6 +38,7 @@ import com.portscanner.service.AsnLookup;
 import com.portscanner.service.CveLookup;
 import com.portscanner.service.GreyNoiseClient;
 import com.portscanner.service.IpInfoClient;
+import com.portscanner.service.LocalCveDatabase;
 import com.portscanner.service.ServiceMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,9 +46,13 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import java.net.Inet6Address;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.Scanner;
@@ -47,12 +60,14 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
+import java.util.stream.Collectors;
 
 @Command(
         name = "portscanner",
         mixinStandardHelpOptions = true,
         version = "2.0",
-        description = "A fast multithreaded TCP/UDP port scanner. Only use on systems you own or have explicit authorization to scan."
+        description = "A fast multithreaded TCP/UDP port scanner. Only use on systems you own or have explicit authorization to scan.",
+        subcommands = {ScanCommand.UpdateDbCommand.class}
 )
 public class ScanCommand implements Callable<Integer> {
 
@@ -67,6 +82,9 @@ public class ScanCommand implements Callable<Integer> {
 
     @Option(names = {"--subnet", "-s"}, description = "CIDR subnet to scan, e.g. 192.168.1.0/24")
     private String subnet;
+
+    @Option(names = "--auto-discover", description = "Scan all local network interfaces automatically (overrides --host and --subnet)")
+    private boolean autoDiscover;
 
     // ── Scan options ────────────────────────────────────────────────────────
     @Option(names = {"--ports", "-p"}, defaultValue = "1-1024",
@@ -148,6 +166,35 @@ public class ScanCommand implements Callable<Integer> {
     @Option(names = {"--verbose", "-v"}, description = "Enable verbose/debug logging")
     private boolean verbose;
 
+    @Option(names = {"--proxy"}, description = "Route scans via SOCKS5 proxy, e.g. socks5://127.0.0.1:1080")
+    private String proxy;
+
+    // ── TUI / IPv6 / DNS ─────────────────────────────────────────────────────
+    @Option(names = {"--tui"}, description = "Enable full-screen interactive TUI (requires a real terminal; falls back to progress bar automatically)")
+    private boolean tui;
+
+    @Option(names = {"--ipv6"}, description = "Prefer IPv6 addresses when resolving hostnames with both A and AAAA records")
+    private boolean ipv6;
+
+    @Option(names = {"--dns-brute"}, description = "DNS subdomain brute-force. Provide a wordlist path, or omit to use the bundled top-1000 list.")
+    private String dnsBruteWordlist;
+
+    @Option(names = {"--dns-brute-enable"}, description = "Enable DNS subdomain brute-force with the bundled top-1000 subdomain list")
+    private boolean dnsBruteEnabled;
+
+    // ── Traceroute ──────────────────────────────────────────────────────────
+    @Option(names = "--traceroute", description = "Run traceroute after scanning")
+    private boolean traceroute;
+
+    @Option(names = "--traceroute-max-hops", defaultValue = "30",
+            description = "Max hops for traceroute. Default: 30")
+    private int tracerouteMaxHops;
+
+    // ── Plugin/Script system ─────────────────────────────────────────────────
+    @Option(names = "--scripts",
+            description = "Comma-separated plugin names to run, or 'all'. E.g. --scripts http-title,ssl-cert")
+    private String scripts;
+
     @Override
     public Integer call() throws Exception {
         // ── Verbose / color setup ───────────────────────────────────────────
@@ -181,10 +228,32 @@ public class ScanCommand implements Callable<Integer> {
         log.debug("Timing profile: {} (timeout={}ms, threads={}, delay={}ms)",
                 timingProfile, timeout, threads, timingConfig.scanDelayMs());
 
-        // ── Validate target: exactly one of --host / --subnet ───────────────
-        if (host == null && subnet == null) {
-            log.error("Must specify either --host or --subnet");
-            System.err.println("Error: specify either --host <host> or --subnet <cidr>");
+        // ── Parse proxy ─────────────────────────────────────────────────────
+        Proxy proxyObj = Proxy.NO_PROXY;
+        if (proxy != null) {
+            String proxySpec = proxy;
+            if (proxySpec.startsWith("socks5://")) {
+                proxySpec = proxySpec.substring("socks5://".length());
+            }
+            String[] parts = proxySpec.split(":", 2);
+            if (parts.length != 2) {
+                System.err.println("Error: --proxy must be in host:port format (e.g. socks5://127.0.0.1:1080 or 127.0.0.1:1080)");
+                return 2;
+            }
+            try {
+                int proxyPort = Integer.parseInt(parts[1]);
+                proxyObj = new Proxy(Proxy.Type.SOCKS,
+                        new InetSocketAddress(parts[0], proxyPort));
+            } catch (NumberFormatException e) {
+                System.err.println("Error: --proxy port is not a valid integer");
+                return 2;
+            }
+        }
+
+        // ── Validate target: exactly one of --host / --subnet / --auto-discover ─
+        if (!autoDiscover && host == null && subnet == null) {
+            log.error("Must specify either --host, --subnet, or --auto-discover");
+            System.err.println("Error: specify either --host <host>, --subnet <cidr>, or --auto-discover");
             return 2;
         }
         if (host != null && subnet != null) {
@@ -237,6 +306,38 @@ public class ScanCommand implements Callable<Integer> {
 
         ServiceMapper serviceMapper = new ServiceMapper();
 
+        // ── AUTO-DISCOVER mode ───────────────────────────────────────────────
+        if (autoDiscover) {
+            if (host != null || subnet != null) {
+                System.err.println("Error: --auto-discover cannot be combined with --host or --subnet");
+                return 2;
+            }
+            NetworkInterfaceScanner nis = new NetworkInterfaceScanner();
+            List<String> discoveredSubnets = nis.discoverLocalSubnets();
+            if (discoveredSubnets.isEmpty()) {
+                System.err.println("No local network interfaces found.");
+                return 1;
+            }
+            System.out.println("Discovered subnets: " + String.join(", ", discoveredSubnets));
+            CidrScanner cidrScanner = new CidrScanner(threads, timeout, grabBanner, serviceMapper);
+            for (String discoveredSubnet : discoveredSubnets) {
+                System.out.println(color(String.format(
+                        "@|bold,cyan Scanning subnet|@ @|green %s|@ — %d ports, %d threads, %dms timeout",
+                        discoveredSubnet, ports.length, threads, timeout)));
+                var subnetReport = cidrScanner.scan(discoveredSubnet, ports);
+                System.out.printf("%nSubnet scan complete in %.2f seconds — %d hosts scanned, %d with open ports%n",
+                        subnetReport.getDurationMs() / 1000.0, subnetReport.getHostsScanned(), subnetReport.getHostsWithOpenPorts());
+                subnetReport.getHostReports().forEach(r -> {
+                    System.out.printf("%n  Host: %s (%s) — %d open ports%n",
+                            r.getHost(), r.getResolvedIp(), r.getOpenCount());
+                    r.getOpenPorts().forEach(p ->
+                            System.out.printf("    %-6d %s%n", p.getPort(),
+                                    p.getServiceName() != null ? p.getServiceName() : "Unknown"));
+                });
+            }
+            return 0;
+        }
+
         // ── SUBNET mode ─────────────────────────────────────────────────────
         if (subnet != null) {
             // Ethical confirmation for non-local subnets
@@ -274,7 +375,7 @@ public class ScanCommand implements Callable<Integer> {
         // ── HOST mode ───────────────────────────────────────────────────────
         InetAddress resolvedAddress;
         try {
-            resolvedAddress = InetAddress.getByName(host);
+            resolvedAddress = ipv6 ? resolvePreferIPv6(host) : InetAddress.getByName(host);
         } catch (Exception e) {
             log.error("Cannot resolve host '{}'", host);
             System.err.println("Error: Cannot resolve host '" + host + "'");
@@ -331,7 +432,17 @@ public class ScanCommand implements Callable<Integer> {
         log.info("Starting scan of {} ({}) — {} ports, protocol={}", host, resolvedAddress.getHostAddress(), ports.length, protocol);
 
         // ── Run TCP scan ────────────────────────────────────────────────────
-        ProgressReporter reporter = new ProgressReporter(ports.length, System.console() != null && !noColor);
+        ProgressReporter reporter;
+        if (tui) {
+            try {
+                reporter = new TuiProgressDisplay(ports.length, host);
+            } catch (Exception e) {
+                log.warn("TUI unavailable ({}), falling back to progress bar", e.getMessage());
+                reporter = new ProgressReporter(ports.length, System.console() != null && !noColor);
+            }
+        } else {
+            reporter = new ProgressReporter(ports.length, System.console() != null && !noColor);
+        }
         ScanReport report = null;
         if ("tcp".equalsIgnoreCase(protocol) || "both".equalsIgnoreCase(protocol)) {
             if (useNio) {
@@ -344,7 +455,8 @@ public class ScanCommand implements Callable<Integer> {
                     reporter.stop();
                 }
             } else {
-                PortScanner scanner = new PortScanner(threads, timeout, grabBanner, serviceMapper, useProbes, rate);
+                PortScanner scanner = new PortScanner(threads, timeout, grabBanner, serviceMapper, useProbes, rate, proxyObj);
+                reporter.setControlledScanner(scanner);
                 reporter.start();
                 try {
                     report = scanner.scan(host, resolvedAddress, ports, reporter);
@@ -356,6 +468,9 @@ public class ScanCommand implements Callable<Integer> {
 
         // ── Run UDP scan ────────────────────────────────────────────────────
         if ("udp".equalsIgnoreCase(protocol) || "both".equalsIgnoreCase(protocol)) {
+            if (proxy != null) {
+                log.warn("Warning: --proxy is not supported with UDP scanning, ignoring proxy");
+            }
             System.out.println(color("@|cyan Running UDP scan...|@"));
             UdpScanner udpScanner = new UdpScanner(threads, timeout, serviceMapper);
             ScanReport udpReport = udpScanner.scan(host, resolvedAddress, ports);
@@ -377,6 +492,9 @@ public class ScanCommand implements Callable<Integer> {
             return 2;
         }
 
+        // Final proxy reference for use in lambdas (proxyObj is not effectively final due to reassignment)
+        final Proxy effectiveProxy = proxyObj;
+
         // ── TLS inspection ──────────────────────────────────────────────────
         if (tlsInspect && report.getOpenPorts() != null && !report.getOpenPorts().isEmpty()) {
             System.out.println(color("@|cyan Inspecting TLS certificates...|@"));
@@ -386,7 +504,7 @@ public class ScanCommand implements Callable<Integer> {
                         boolean isTlsPort = TLS_PORTS.contains(port)
                                 || (result.getServiceName() != null && result.getServiceName().toLowerCase().contains("https"));
                         if (isTlsPort) {
-                            TlsInspector.inspect(host, port, timeout + 1000)
+                            TlsInspector.inspect(host, port, timeout + 1000, effectiveProxy)
                                     .ifPresent(result::setTlsInfo);
                         }
                     }))
@@ -408,7 +526,7 @@ public class ScanCommand implements Callable<Integer> {
                             boolean useTls = port == 443 || port == 8443
                                     || (result.getServiceName() != null
                                         && result.getServiceName().toLowerCase().contains("https"));
-                            HttpInspector.inspect(host, port, useTls, timeout + 1000)
+                            HttpInspector.inspect(host, port, useTls, timeout + 1000, effectiveProxy)
                                     .ifPresent(result::setHttpInfo);
                         }
                     }))
@@ -440,6 +558,30 @@ public class ScanCommand implements Callable<Integer> {
                 }))
                 .toList();
             CompletableFuture.allOf(cveFutures.toArray(new CompletableFuture[0])).join();
+        }
+
+        // ── Plugin/Script execution ──────────────────────────────────────────
+        if (scripts != null && !scripts.isBlank()) {
+            PluginRegistry registry = new PluginRegistry();
+            List<ScanPlugin> toRun;
+            if ("all".equalsIgnoreCase(scripts.trim())) {
+                toRun = registry.getAll();
+            } else {
+                toRun = Arrays.stream(scripts.split(","))
+                        .map(String::trim)
+                        .map(registry::getByName)
+                        .filter(Optional::isPresent)
+                        .map(Optional::get)
+                        .collect(Collectors.toList());
+            }
+            PluginContext ctx = new PluginContext(host, timeout, config, System.out);
+            for (ScanResult result : report.getOpenPorts()) {
+                for (ScanPlugin plugin : toRun) {
+                    if (plugin.appliesTo(result)) {
+                        try { plugin.execute(result, ctx); } catch (Exception e) { /* silent */ }
+                    }
+                }
+            }
         }
 
         // ── Reverse DNS enrichment ───────────────────────────────────────────
@@ -508,6 +650,55 @@ public class ScanCommand implements Callable<Integer> {
         if (geoLocation != null) reportBuilder.geoLocation(geoLocation);
         report = reportBuilder.build();
 
+        // ── Traceroute ──────────────────────────────────────────────────────
+        if (traceroute) {
+            System.out.printf("%nTRACEROUTE (%d hops max):%n", tracerouteMaxHops);
+            List<TracerouteHop> hops = new Traceroute().run(host, tracerouteMaxHops);
+            if (hops.isEmpty()) {
+                System.out.println("(no results — traceroute may not be available on this system)");
+            } else {
+                for (TracerouteHop hop : hops) {
+                    if ("*".equals(hop.ip())) {
+                        System.out.printf(" %-3d  %-10s (timeout)%n", hop.hopNumber(), "*");
+                    } else {
+                        String rttStr = hop.rttMs() < 0 ? "*" : String.format("%.1fms", hop.rttMs());
+                        String nameStr = hop.hostname() != null && !hop.hostname().equals(hop.ip())
+                                ? " (" + hop.hostname() + ")" : "";
+                        System.out.printf(" %-3d  %-10s %s%s%n", hop.hopNumber(), rttStr, hop.ip(), nameStr);
+                    }
+                }
+            }
+            report = report.toBuilder().tracerouteHops(hops).build();
+        }
+
+        // ── Populate TUI open ports table (if TUI was used) ─────────────────
+        if (reporter instanceof TuiProgressDisplay tuiDisplay) {
+            tuiDisplay.setOpenPorts(report.getOpenPorts() != null ? report.getOpenPorts() : List.of());
+        }
+
+        // ── DNS subdomain brute-force ────────────────────────────────────────
+        List<SubdomainResult> subdomainResults = List.of();
+        if (dnsBruteEnabled || dnsBruteWordlist != null) {
+            System.out.println(color(String.format(
+                    "%n@|cyan DNS brute-force:|@ target=%s  wordlist=%s",
+                    host,
+                    dnsBruteWordlist != null ? dnsBruteWordlist : "bundled top-1000")));
+            try {
+                DnsBruteForcer bruteForcer = new DnsBruteForcer(host, Math.max(timeout, 2000));
+                Path wordlistPath = dnsBruteWordlist != null ? Path.of(dnsBruteWordlist) : null;
+                List<String> wordlist = bruteForcer.loadWordlist(wordlistPath);
+                System.out.printf("Brute-forcing %d subdomain candidates...%n", wordlist.size());
+                subdomainResults = bruteForcer.bruteForce(wordlist);
+                printSubdomainResults(subdomainResults);
+                if (!subdomainResults.isEmpty()) {
+                    report = report.toBuilder().subdomains(subdomainResults).build();
+                }
+            } catch (Exception e) {
+                System.err.println("Warning: DNS brute-force failed — " + e.getMessage());
+                log.debug("DNS brute-force error", e);
+            }
+        }
+
         // ── Print summary ───────────────────────────────────────────────────
         printSummary(report, showAll);
 
@@ -532,6 +723,31 @@ public class ScanCommand implements Callable<Integer> {
         }
 
         return 0;
+    }
+
+    private InetAddress resolvePreferIPv6(String host) throws java.net.UnknownHostException {
+        InetAddress[] all = InetAddress.getAllByName(host);
+        for (InetAddress addr : all) {
+            if (addr instanceof Inet6Address) return addr;
+        }
+        return all[0]; // fallback to first address if no IPv6
+    }
+
+    private void printSubdomainResults(List<SubdomainResult> results) {
+        if (results.isEmpty()) {
+            System.out.println(color("@|yellow No subdomains discovered.|@"));
+            return;
+        }
+        System.out.println(color(String.format("%n@|bold %-50s %-25s %s|@", "SUBDOMAIN", "ADDRESS(ES)", "CNAME")));
+        System.out.println("-".repeat(95));
+        for (SubdomainResult r : results) {
+            String addr  = (r.getAddresses() != null && !r.getAddresses().isEmpty())
+                    ? String.join(", ", r.getAddresses()) : "-";
+            String cname = r.getCname() != null ? r.getCname() : "-";
+            System.out.println(color(String.format(
+                    "@|green %-50s|@ @|yellow %-25s|@ %s", r.getSubdomain(), addr, cname)));
+        }
+        System.out.printf("%n%d subdomain(s) discovered.%n", results.size());
     }
 
     private String resolveApiKey(String envVar, String configValue, String serviceName) {
@@ -656,6 +872,21 @@ public class ScanCommand implements Callable<Integer> {
             int port = Integer.parseInt(portRange.trim());
             if (port < 1 || port > 65535) throw new IllegalArgumentException("Port out of range: " + port);
             return new int[]{port};
+        }
+    }
+
+    @Command(name = "update-db", description = "Download/update local CVE database from NVD")
+    static class UpdateDbCommand implements Callable<Integer> {
+        @Option(names = "--nvd-api-key", description = "NVD API key (optional, increases rate limit)")
+        private String nvdApiKey;
+
+        @Override
+        public Integer call() {
+            String apiKey = nvdApiKey != null ? nvdApiKey : System.getenv("NVD_API_KEY");
+            System.out.println("Syncing CVE database from NVD...");
+            new LocalCveDatabase().sync(apiKey);
+            System.out.println("CVE database updated: ~/.portscanner/cve-db.sqlite");
+            return 0;
         }
     }
 }

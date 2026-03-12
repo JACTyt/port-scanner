@@ -9,6 +9,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
@@ -30,17 +31,24 @@ public class HttpInspector {
     );
 
     public static Optional<HttpInfo> inspect(String host, int port, boolean useTls, int timeoutMs) {
+        return inspect(host, port, useTls, timeoutMs, Proxy.NO_PROXY);
+    }
+
+    public static Optional<HttpInfo> inspect(String host, int port, boolean useTls, int timeoutMs, Proxy proxy) {
         try {
+            Proxy effectiveProxy = proxy != null ? proxy : Proxy.NO_PROXY;
             Socket socket;
             if (useTls) {
                 SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-                socket = factory.createSocket();
+                Socket plainSocket = new Socket(effectiveProxy);
+                plainSocket.connect(new InetSocketAddress(host, port), timeoutMs);
+                socket = factory.createSocket(plainSocket, host, port, true);
             } else {
-                socket = new Socket();
+                socket = new Socket(effectiveProxy);
+                socket.connect(new InetSocketAddress(host, port), timeoutMs);
             }
 
             try (Socket s = socket) {
-                s.connect(new InetSocketAddress(host, port), timeoutMs);
                 s.setSoTimeout(timeoutMs);
 
                 String request = "GET / HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n";

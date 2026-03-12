@@ -7,6 +7,7 @@ import com.portscanner.model.ScanReport;
 import com.portscanner.model.ScanResult;
 import com.portscanner.model.ThreatInfo;
 import com.portscanner.model.TlsInfo;
+import com.portscanner.model.TracerouteHop;
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -153,6 +154,25 @@ public class HtmlExporter implements ReportExporter {
                 w.println("<table><tr><th>Port</th><th>Status</th></tr>");
                 for (ScanResult r : filtered) {
                     w.printf("<tr><td>%d</td><td><span class=\"badge-filtered\">%s</span></td></tr>%n", r.getPort(), r.getStatus());
+                }
+                w.println("</table>");
+            }
+
+            // Traceroute section
+            List<TracerouteHop> hops = report.getTracerouteHops();
+            if (hops != null && !hops.isEmpty()) {
+                w.println("<h2 style=\"color:#88ccff\">Traceroute</h2>");
+                w.println("<table><tr><th>Hop</th><th>RTT</th><th>IP</th><th>Hostname</th></tr>");
+                for (TracerouteHop hop : hops) {
+                    if ("*".equals(hop.ip())) {
+                        w.printf("<tr><td>%d</td><td>*</td><td>*</td><td>(timeout)</td></tr>%n", hop.hopNumber());
+                    } else {
+                        String rttStr = hop.rttMs() < 0 ? "*" : String.format("%.1fms", hop.rttMs());
+                        String hostname = hop.hostname() != null && !hop.hostname().equals(hop.ip())
+                                ? esc(hop.hostname()) : "-";
+                        w.printf("<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td></tr>%n",
+                                hop.hopNumber(), esc(rttStr), esc(hop.ip()), hostname);
+                    }
                 }
                 w.println("</table>");
             }

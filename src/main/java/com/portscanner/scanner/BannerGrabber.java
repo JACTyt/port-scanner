@@ -8,22 +8,31 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.Socket;
 
 public class BannerGrabber {
 
     private final boolean useProbes;
+    private final Proxy proxy;
 
     public BannerGrabber() {
         this.useProbes = false;
+        this.proxy = Proxy.NO_PROXY;
     }
 
     public BannerGrabber(boolean useProbes) {
         this.useProbes = useProbes;
+        this.proxy = Proxy.NO_PROXY;
+    }
+
+    public BannerGrabber(boolean useProbes, Proxy proxy) {
+        this.useProbes = useProbes;
+        this.proxy = proxy != null ? proxy : Proxy.NO_PROXY;
     }
 
     public String grabBanner(String host, int port, int timeoutMs) {
-        try (Socket socket = new Socket()) {
+        try (Socket socket = new Socket(proxy)) {
             socket.connect(new InetSocketAddress(host, port), timeoutMs);
             socket.setSoTimeout(1500);
 

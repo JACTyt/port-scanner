@@ -1,0 +1,3 @@
+com.portscanner.plugin.builtin.HttpTitlePlugin
+com.portscanner.plugin.builtin.SslCertPlugin
+com.portscanner.plugin.builtin.SshVersionPlugin

@@ -7,6 +7,7 @@ import com.portscanner.model.ScanReport;
 import com.portscanner.model.ScanResult;
 import com.portscanner.model.ThreatInfo;
 import com.portscanner.model.TlsInfo;
+import com.portscanner.model.TracerouteHop;
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -129,6 +130,24 @@ public class TextExporter implements ReportExporter {
                 w.printf("%-8s %-10s%n", "PORT", "STATE");
                 for (ScanResult r : filtered) {
                     w.printf("%-8d %-10s%n", r.getPort(), r.getStatus());
+                }
+            }
+
+            // Traceroute section
+            List<TracerouteHop> hops = report.getTracerouteHops();
+            if (hops != null && !hops.isEmpty()) {
+                w.println(DASH);
+                w.println("TRACEROUTE:");
+                w.printf("%-6s %-10s %-18s %s%n", "HOP", "RTT", "IP", "HOSTNAME");
+                for (TracerouteHop hop : hops) {
+                    if ("*".equals(hop.ip())) {
+                        w.printf("%-6d %-10s %-18s %s%n", hop.hopNumber(), "*", "*", "(timeout)");
+                    } else {
+                        String rttStr = hop.rttMs() < 0 ? "*" : String.format("%.1fms", hop.rttMs());
+                        String hostname = hop.hostname() != null && !hop.hostname().equals(hop.ip())
+                                ? hop.hostname() : "-";
+                        w.printf("%-6d %-10s %-18s %s%n", hop.hopNumber(), rttStr, hop.ip(), hostname);
+                    }
                 }
             }
 

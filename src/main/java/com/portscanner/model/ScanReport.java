@@ -9,6 +9,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 import java.util.List;
 
+
 @Data
 @Builder(toBuilder = true)
 @NoArgsConstructor
@@ -27,4 +28,6 @@ public class ScanReport {
     private AsnInfo asnInfo;
     private ThreatInfo threatInfo;
     private GeoLocation geoLocation;
+    private List<TracerouteHop> tracerouteHops;
+    private List<SubdomainResult> subdomains;
 }

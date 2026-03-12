@@ -52,10 +52,21 @@ public class CveLookup {
 
     /**
      * Looks up CVEs for the given keyword. Returns up to MAX_RESULTS CVE IDs.
+     * Checks local SQLite database first; falls back to live NVD API if no local results.
      */
     public List<String> lookup(String keyword) {
         if (keyword == null || keyword.isBlank()) return List.of();
         if (cache.containsKey(keyword)) return cache.get(keyword);
+
+        // Try local database first
+        LocalCveDatabase localDb = new LocalCveDatabase();
+        if (localDb.isDatabasePresent()) {
+            List<String> localResults = localDb.query(keyword);
+            if (!localResults.isEmpty()) {
+                cache.put(keyword, localResults);
+                return localResults;
+            }
+        }
 
         enforceRateLimit();
 
