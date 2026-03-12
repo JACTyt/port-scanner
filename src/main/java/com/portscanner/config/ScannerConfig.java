@@ -18,4 +18,7 @@ public class ScannerConfig {
     private String outputDir;
     private Boolean banner;
     private Boolean showAll;
+    private String abuseIpDbKey;
+    private String greynoiseKey;
+    private String ipinfoToken;
 }

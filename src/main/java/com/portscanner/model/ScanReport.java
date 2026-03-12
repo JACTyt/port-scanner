@@ -24,4 +24,7 @@ public class ScanReport {
     private int filteredCount;
     private List<ScanResult> openPorts;
     private List<ScanResult> filteredPorts;
+    private AsnInfo asnInfo;
+    private ThreatInfo threatInfo;
+    private GeoLocation geoLocation;
 }

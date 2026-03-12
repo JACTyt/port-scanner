@@ -1,7 +1,12 @@
 package com.portscanner.report;
 
+import com.portscanner.model.AsnInfo;
+import com.portscanner.model.GeoLocation;
+import com.portscanner.model.HttpInfo;
 import com.portscanner.model.ScanReport;
 import com.portscanner.model.ScanResult;
+import com.portscanner.model.ThreatInfo;
+import com.portscanner.model.TlsInfo;
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -9,6 +14,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 public class TextExporter implements ReportExporter {
 
@@ -28,6 +35,39 @@ public class TextExporter implements ReportExporter {
             w.printf("Duration     : %.2f seconds%n", report.getDurationMs() / 1000.0);
             w.printf("Ports Scanned: %d  |  Open: %d  |  Filtered: %d%n",
                     report.getTotalScanned(), report.getOpenCount(), report.getFilteredCount());
+
+            // Geolocation block
+            GeoLocation geo = report.getGeoLocation();
+            if (geo != null) {
+                String loc = List.of(nvl2(geo.getCity()), nvl2(geo.getRegion()), nvl2(geo.getCountry()))
+                        .stream().filter(s -> !s.isEmpty()).collect(Collectors.joining(", "));
+                w.printf("Location     : %s | ISP: %s | TZ: %s%n",
+                        loc, nvl(geo.getOrg()), nvl(geo.getTimezone()));
+            }
+
+            // ASN block
+            AsnInfo asn = report.getAsnInfo();
+            if (asn != null) {
+                w.printf("ASN          : %s %s | %s | %s%n",
+                        nvl(asn.getAsn()), nvl(asn.getName()), nvl(asn.getPrefix()), nvl(asn.getCountry()));
+            }
+
+            // Threat info block
+            ThreatInfo threat = report.getThreatInfo();
+            if (threat != null) {
+                if (threat.getAbuseConfidenceScore() > 0 || threat.getAbuseReportCount() > 0) {
+                    String risk = threat.getAbuseConfidenceScore() > 25 ? "HIGH RISK" : "LOW RISK";
+                    w.printf("!! THREAT    : AbuseIPDB score %d/100 (%d reports) -- %s%n",
+                            threat.getAbuseConfidenceScore(), threat.getAbuseReportCount(), risk);
+                }
+                if (threat.getGreynoiseClassification() != null) {
+                    String scannerInfo = threat.isGreynoiseIsScanner()
+                            ? " (Scanner: " + nvl(threat.getIsp()) + ")" : "";
+                    w.printf("GreyNoise    : %s%s%n",
+                            threat.getGreynoiseClassification().toUpperCase(), scannerInfo);
+                }
+            }
+
             w.println(DASH);
 
             w.println("OPEN PORTS:");
@@ -37,12 +77,46 @@ public class TextExporter implements ReportExporter {
             } else {
                 w.printf("%-8s %-10s %-16s %-12s %s%n", "PORT", "STATE", "SERVICE", "RESPONSE", "BANNER");
                 for (ScanResult r : open) {
-                    w.printf("%-8d %-10s %-16s %-12s %s%n",
+                    String hostPart = r.getHostname() != null ? " (" + r.getHostname() + ")" : "";
+                    w.printf("%-8d %-10s %-16s %-12s %s%s%n",
                             r.getPort(),
                             r.getStatus(),
                             nvl(r.getServiceName()),
                             r.getResponseTimeMs() + "ms",
-                            nvl(r.getBanner()));
+                            nvl(r.getBanner()),
+                            hostPart);
+                    // TLS info sub-row
+                    TlsInfo tls = r.getTlsInfo();
+                    if (tls != null) {
+                        StringBuilder tlsLine = new StringBuilder("  +-- TLS: ")
+                                .append(nvl(tls.getProtocol()))
+                                .append(" | Expires: ").append(tls.getCertExpiry() != null ? tls.getCertExpiry() : "N/A")
+                                .append(" | CN=").append(extractCn(tls.getCertSubject()));
+                        if (tls.isExpired()) tlsLine.append(" [EXPIRED]");
+                        if (tls.isExpiresSoon()) tlsLine.append(" [EXPIRES SOON]");
+                        if (tls.isDeprecatedProtocol()) tlsLine.append(" [DEPRECATED PROTOCOL]");
+                        if (tls.isWeakCipher()) tlsLine.append(" [WEAK CIPHER]");
+                        if (tls.isSelfSigned()) tlsLine.append(" [SELF-SIGNED]");
+                        w.println(tlsLine);
+                    }
+                    // HTTP info sub-row
+                    HttpInfo http = r.getHttpInfo();
+                    if (http != null) {
+                        StringBuilder httpLine = new StringBuilder("  +-- HTTP ")
+                                .append(http.getStatusCode())
+                                .append(" | Server: ").append(nvl(http.getServerHeader()));
+                        // Missing security headers
+                        if (http.getSecurityHeaders() != null) {
+                            List<String> missing = http.getSecurityHeaders().entrySet().stream()
+                                    .filter(e -> !e.getValue())
+                                    .map(Map.Entry::getKey)
+                                    .collect(Collectors.toList());
+                            if (!missing.isEmpty()) {
+                                httpLine.append(" | Missing: ").append(String.join(", ", missing));
+                            }
+                        }
+                        w.println(httpLine);
+                    }
                 }
             }
 
@@ -62,7 +136,23 @@ public class TextExporter implements ReportExporter {
         }
     }
 
+    private String extractCn(String dn) {
+        if (dn == null) return "-";
+        // Extract CN= value from DN
+        for (String part : dn.split(",")) {
+            String trimmed = part.trim();
+            if (trimmed.startsWith("CN=")) {
+                return trimmed.substring(3);
+            }
+        }
+        return dn;
+    }
+
     private String nvl(String value) {
         return value != null ? value : "-";
+    }
+
+    private String nvl2(String value) {
+        return value != null ? value : "";
     }
 }

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
@@ -84,5 +85,41 @@ class BannerGrabberTest {
         BannerGrabber grabber = new BannerGrabber(false);
         String result = grabber.grabBanner("localhost", port, 1000);
         assertEquals("220 mail.example.com ESMTP Postfix (Ubuntu)", result);
+    }
+
+    @Test
+    void redis_pong_response_is_grabbed() throws Exception {
+        // Server immediately sends +PONG on connect (simulating Redis greeting)
+        serveBanner("+PONG");
+
+        // Verify the grabber can capture a Redis-style +PONG banner
+        BannerGrabber grabber = new BannerGrabber(false);
+        String result = grabber.grabBanner("localhost", port, 1000);
+        assertEquals("+PONG", result);
+    }
+
+    @Test
+    void readRawBytes_reads_available_bytes() throws Exception {
+        byte[] data = {0x01, 0x02, 0x03, 0x04, 0x05};
+        ByteArrayInputStream in = new ByteArrayInputStream(data);
+        byte[] result = BannerGrabber.readRawBytes(in, 1024, 1000);
+        assertArrayEquals(data, result);
+    }
+
+    @Test
+    void readRawBytes_respects_maxBytes_limit() throws Exception {
+        byte[] data = new byte[100];
+        for (int i = 0; i < 100; i++) data[i] = (byte) i;
+        ByteArrayInputStream in = new ByteArrayInputStream(data);
+        byte[] result = BannerGrabber.readRawBytes(in, 10, 1000);
+        assertEquals(10, result.length);
+        for (int i = 0; i < 10; i++) assertEquals((byte) i, result[i]);
+    }
+
+    @Test
+    void readRawBytes_returns_empty_for_empty_stream() throws Exception {
+        ByteArrayInputStream in = new ByteArrayInputStream(new byte[0]);
+        byte[] result = BannerGrabber.readRawBytes(in, 1024, 200);
+        assertEquals(0, result.length);
     }
 }

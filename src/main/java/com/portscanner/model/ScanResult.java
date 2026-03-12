@@ -20,4 +20,7 @@ public class ScanResult {
     private String banner;
     private long responseTimeMs;
     private List<String> cves;
+    private String hostname;
+    private TlsInfo tlsInfo;
+    private HttpInfo httpInfo;
 }

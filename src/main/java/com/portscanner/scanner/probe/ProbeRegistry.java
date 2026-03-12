@@ -19,6 +19,10 @@ public class ProbeRegistry {
         PORT_PROBES.put(21, new FtpProbe());
         PORT_PROBES.put(20, new FtpProbe());
         PORT_PROBES.put(22, new SshProbe());
+        PORT_PROBES.put(6379, new RedisProbe());
+        PORT_PROBES.put(11211, new MemcachedProbe());
+        PORT_PROBES.put(3306, new MysqlProbe());
+        PORT_PROBES.put(5432, new PostgresProbe());
     }
 
     public static Probe getProbe(int port) {
