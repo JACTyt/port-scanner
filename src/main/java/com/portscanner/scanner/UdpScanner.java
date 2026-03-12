@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -69,8 +70,8 @@ public class UdpScanner {
         LocalDateTime scannedAt = LocalDateTime.now();
         long startTime = System.currentTimeMillis();
 
-        int poolSize = Math.min(threadCount, Math.max(1, ports.length));
-        ExecutorService executor = Executors.newFixedThreadPool(poolSize);
+        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        Semaphore concurrencyLimit = new Semaphore(Math.min(threadCount, 1000));
         List<Future<ScanResult>> futures = new ArrayList<>(ports.length);
         AtomicInteger scanned = new AtomicInteger(0);
         int total = ports.length;
@@ -78,9 +79,14 @@ public class UdpScanner {
         for (int port : ports) {
             final int p = port;
             futures.add(executor.submit(() -> {
-                ScanResult result = scanPort(host, p);
-                System.err.printf("\rUDP Scanning... %d/%d ports", scanned.incrementAndGet(), total);
-                return result;
+                concurrencyLimit.acquire();
+                try {
+                    ScanResult result = scanPort(host, p);
+                    System.err.printf("\rUDP Scanning... %d/%d ports", scanned.incrementAndGet(), total);
+                    return result;
+                } finally {
+                    concurrencyLimit.release();
+                }
             }));
         }
 

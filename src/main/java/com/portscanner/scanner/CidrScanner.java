@@ -8,6 +8,12 @@ import java.net.InetAddress;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Scans all hosts in a CIDR subnet (e.g., 192.168.1.0/24).
@@ -60,16 +66,33 @@ public class CidrScanner {
         List<String> aliveHosts = discovery.discoverHosts(allHosts);
         System.out.printf("Found %d alive hosts. Scanning ports...%n", aliveHosts.size());
 
-        // Port scan each alive host
-        List<ScanReport> hostReports = new ArrayList<>();
-        int hostsWithOpen = 0;
-        for (String ip : aliveHosts) {
-            InetAddress addr = InetAddress.getByName(ip);
-            PortScanner scanner = new PortScanner(threadCount, timeoutMs, grabBanner, serviceMapper);
-            ScanReport report = scanner.scan(ip, addr, ports);
-            hostReports.add(report);
-            if (report.getOpenCount() > 0) hostsWithOpen++;
+        // Port scan each alive host (parallel via virtual threads)
+        List<ScanReport> hostReports = new CopyOnWriteArrayList<>();
+        AtomicInteger hostsWithOpenAtomic = new AtomicInteger(0);
+
+        try (ExecutorService hostExecutor = Executors.newVirtualThreadPerTaskExecutor()) {
+            Semaphore hostLimit = new Semaphore(Math.min(threadCount, 1000));
+            List<Future<?>> hostFutures = new ArrayList<>();
+            for (String ip : aliveHosts) {
+                hostFutures.add(hostExecutor.submit(() -> {
+                    hostLimit.acquire();
+                    try {
+                        InetAddress addr = InetAddress.getByName(ip);
+                        PortScanner scanner = new PortScanner(threadCount, timeoutMs, grabBanner, serviceMapper);
+                        ScanReport report = scanner.scan(ip, addr, ports);
+                        hostReports.add(report);
+                        if (report.getOpenCount() > 0) hostsWithOpenAtomic.incrementAndGet();
+                    } finally {
+                        hostLimit.release();
+                    }
+                    return null;
+                }));
+            }
+            for (Future<?> f : hostFutures) {
+                try { f.get(); } catch (Exception ignored) {}
+            }
         }
+        int hostsWithOpen = hostsWithOpenAtomic.get();
 
         long durationMs = System.currentTimeMillis() - startTime;
         return SubnetReport.builder()

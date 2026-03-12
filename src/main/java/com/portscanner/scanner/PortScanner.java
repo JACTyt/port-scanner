@@ -7,6 +7,8 @@ import com.portscanner.service.ServiceMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.portscanner.cli.ProgressReporter;
+
 import java.net.ConnectException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -17,11 +19,11 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class PortScanner {
 
@@ -76,6 +78,10 @@ public class PortScanner {
     }
 
     public ScanReport scan(String host, InetAddress resolvedAddress, int[] ports) {
+        return scan(host, resolvedAddress, ports, null);
+    }
+
+    public ScanReport scan(String host, InetAddress resolvedAddress, int[] ports, ProgressReporter reporter) {
         LocalDateTime scannedAt = LocalDateTime.now();
         long startTime = System.currentTimeMillis();
 
@@ -84,47 +90,56 @@ public class PortScanner {
         for (int p : ports) portList.add(p);
         if (rateLimiter != null) Collections.shuffle(portList);
 
-        int poolSize = Math.min(threadCount, Math.max(1, portList.size()));
-        ExecutorService executor = Executors.newFixedThreadPool(poolSize);
-        List<Future<ScanResult>> futures = new ArrayList<>(portList.size());
-        AtomicInteger scanned = new AtomicInteger(0);
+        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        Semaphore concurrencyLimit = new Semaphore(Math.min(threadCount, 1000));
         int total = portList.size();
-
-        for (int port : portList) {
-            if (rateLimiter != null) rateLimiter.acquire();
-            futures.add(executor.submit(() -> {
-                ScanResult result = scanPort(host, port);
-                int count = scanned.incrementAndGet();
-                if (count % 100 == 0 || count == total) {
-                    log.debug("Scanning... {}/{} ports", count, total);
-                }
-                System.err.printf("\rScanning... %d/%d ports", count, total);
-                return result;
-            }));
-        }
-
-        List<ScanResult> openPorts = new ArrayList<>();
-        List<ScanResult> filteredPorts = new ArrayList<>();
 
         long maxQueueDelayMs = 0L;
         if (rateLimiter != null && ratePerSecond > 0) {
             maxQueueDelayMs = Math.min((long) portList.size() * 1000L / ratePerSecond, 60_000L);
         }
+        final long futureTimeout = timeoutMs + 500L + maxQueueDelayMs;
 
-        for (Future<ScanResult> future : futures) {
-            try {
-                ScanResult result = future.get(timeoutMs + 500L + maxQueueDelayMs, TimeUnit.MILLISECONDS);
-                if (result.getStatus() == PortStatus.OPEN) {
-                    openPorts.add(result);
-                } else if (result.getStatus() == PortStatus.FILTERED) {
-                    filteredPorts.add(result);
-                }
-            } catch (Exception e) {
-                log.debug("Future timed out or interrupted: {}", e.getMessage());
-            }
+        // Submit all port scans as CompletableFutures (TASK-05)
+        List<CompletableFuture<ScanResult>> futures = new ArrayList<>(portList.size());
+        for (int port : portList) {
+            if (rateLimiter != null) rateLimiter.acquire();
+            futures.add(CompletableFuture
+                .supplyAsync(() -> {
+                    try {
+                        concurrencyLimit.acquire();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException(e);
+                    }
+                    try {
+                        return scanPort(host, port);
+                    } finally {
+                        concurrencyLimit.release();
+                    }
+                }, executor)
+                .orTimeout(futureTimeout, TimeUnit.MILLISECONDS)
+                .exceptionally(ex -> ScanResult.builder()
+                    .port(port).status(PortStatus.FILTERED)
+                    .responseTimeMs(timeoutMs).build()));
         }
 
-        System.err.println();
+        // Wait for all futures then collect results
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        List<ScanResult> openPorts = new ArrayList<>();
+        List<ScanResult> filteredPorts = new ArrayList<>();
+
+        for (CompletableFuture<ScanResult> future : futures) {
+            ScanResult result = future.join();
+            if (result.getStatus() == PortStatus.OPEN) {
+                openPorts.add(result);
+            } else if (result.getStatus() == PortStatus.FILTERED) {
+                filteredPorts.add(result);
+            }
+            if (reporter != null) reporter.portScanned(result.getStatus());
+        }
+
         executor.shutdown();
 
         long durationMs = System.currentTimeMillis() - startTime;

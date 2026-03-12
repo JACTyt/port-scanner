@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.portscanner.config.ConfigLoader;
 import com.portscanner.config.ScannerConfig;
+import com.portscanner.config.ScanTimingConfig;
+import com.portscanner.config.TimingProfile;
 import com.portscanner.model.ScanReport;
 import com.portscanner.model.ScanResult;
 import com.portscanner.report.DiffReport;
@@ -16,6 +18,7 @@ import com.portscanner.scanner.CidrScanner;
 import com.portscanner.scanner.HostDiscovery;
 import com.portscanner.scanner.NioPortScanner;
 import com.portscanner.scanner.PortScanner;
+import com.portscanner.scanner.TopPorts;
 import com.portscanner.scanner.UdpScanner;
 import com.portscanner.service.CveLookup;
 import com.portscanner.service.ServiceMapper;
@@ -31,6 +34,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Semaphore;
 
 @Command(
         name = "portscanner",
@@ -55,12 +60,16 @@ public class ScanCommand implements Callable<Integer> {
     private String portRange;
 
     @Option(names = {"--timeout", "-t"}, defaultValue = "200",
-            description = "Connection timeout in milliseconds (50-5000). Default: 200")
+            description = "Connection timeout in milliseconds (50-5000 for manual setting; timing profiles may set higher values). Default: 200")
     private int timeout;
 
     @Option(names = {"--threads"}, defaultValue = "100",
-            description = "Thread pool size (max 200). Default: 100")
+            description = "Max concurrent connections (max 1000, uses Java 21 virtual threads). Default: 100")
     private int threads;
+
+    @Option(names = {"-T", "--timing"}, defaultValue = "NORMAL",
+            description = "Timing profile: PARANOID(T0), SNEAKY(T1), POLITE(T2), NORMAL(T3), AGGRESSIVE(T4), INSANE(T5). Integer aliases T0-T5 accepted.")
+    private String timingInput;
 
     @Option(names = {"--protocol"}, defaultValue = "tcp",
             description = "Protocol to scan: tcp, udp, both. Default: tcp")
@@ -73,7 +82,7 @@ public class ScanCommand implements Callable<Integer> {
     @Option(names = {"--skip-discovery"}, description = "Skip host reachability check before scanning (useful when target blocks ICMP)")
     private boolean skipDiscovery;
 
-    @Option(names = {"--use-nio"}, description = "Use NIO non-blocking scanner for higher throughput (disables banner grabbing)")
+    @Option(names = {"--use-nio"}, description = "[Legacy] NIO non-blocking scanner — equivalent performance to default scanner with virtual threads. Disables banner grabbing.")
     private boolean useNio;
 
     // ── Service detection ───────────────────────────────────────────────────
@@ -87,6 +96,10 @@ public class ScanCommand implements Callable<Integer> {
     private boolean lookupCves;
 
     // ── Output ──────────────────────────────────────────────────────────────
+    @Option(names = {"--top-ports"},
+            description = "Scan N most commonly open ports in frequency order (overrides --ports). Max 1000.")
+    private Integer topPorts;
+
     @Option(names = {"--output", "-o"}, description = "Output file (.json, .csv, .txt, .html, .xml)")
     private String outputFile;
 
@@ -115,11 +128,25 @@ public class ScanCommand implements Callable<Integer> {
         // ── Load user config (CLI options override) ─────────────────────────
         ConfigLoader.createSampleIfAbsent();
         ScannerConfig config = ConfigLoader.load();
-        if (timeout == 200 && config.getTimeout() != null)   timeout  = config.getTimeout();
-        if (threads == 100 && config.getThreads() != null)   threads  = config.getThreads();
+        boolean userSetTimeout = (timeout != 200);
+        boolean userSetThreads = (threads != 100);
+        if (!userSetTimeout && config.getTimeout() != null)   timeout  = config.getTimeout();
+        if (!userSetThreads && config.getThreads() != null)   threads  = config.getThreads();
         if ("1-1024".equals(portRange) && config.getPorts() != null) portRange = config.getPorts();
         if (!grabBanner  && Boolean.TRUE.equals(config.getBanner()))  grabBanner  = true;
         if (!showAll     && Boolean.TRUE.equals(config.getShowAll())) showAll     = true;
+
+        // ── Apply timing profile (only for unset options) ───────────────────
+        TimingProfile timingProfile = TimingProfile.fromString(timingInput);
+        ScanTimingConfig timingConfig = ScanTimingConfig.forProfile(timingProfile);
+        if (!userSetTimeout && config.getTimeout() == null) {
+            timeout = (int) Math.min(timingConfig.connectTimeoutMs(), Integer.MAX_VALUE / 2);
+        }
+        if (!userSetThreads && config.getThreads() == null) {
+            threads = timingConfig.maxParallelism();
+        }
+        log.debug("Timing profile: {} (timeout={}ms, threads={}, delay={}ms)",
+                timingProfile, timeout, threads, timingConfig.scanDelayMs());
 
         // ── Validate target: exactly one of --host / --subnet ───────────────
         if (host == null && subnet == null) {
@@ -134,9 +161,14 @@ public class ScanCommand implements Callable<Integer> {
         }
 
         // ── Validate options ────────────────────────────────────────────────
-        if (timeout < 50 || timeout > 5000) {
-            log.error("--timeout must be between 50 and 5000 ms");
-            System.err.println("Error: --timeout must be between 50 and 5000 ms");
+        if (timeout < 50) {
+            log.error("--timeout must be at least 50 ms");
+            System.err.println("Error: --timeout must be at least 50 ms");
+            return 2;
+        }
+        if (userSetTimeout && timeout > 5000) {
+            log.error("--timeout must be between 50 and 5000 ms (use -T profile for longer timeouts)");
+            System.err.println("Error: --timeout must be between 50 and 5000 ms (use -T PARANOID etc. for longer timeouts)");
             return 2;
         }
         if (threads < 1) {
@@ -144,16 +176,25 @@ public class ScanCommand implements Callable<Integer> {
             System.err.println("Error: --threads must be at least 1");
             return 2;
         }
-        threads = Math.min(threads, 200);
+        threads = Math.min(threads, 1000);
 
         // ── Parse ports ─────────────────────────────────────────────────────
-        int[] ports;
-        try {
-            ports = parsePorts(portRange);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid port range: {}", e.getMessage());
-            System.err.println("Error: Invalid port range — " + e.getMessage());
+        if (topPorts != null && !"1-1024".equals(portRange)) {
+            System.err.println("Error: --top-ports and --ports are mutually exclusive");
             return 2;
+        }
+        int[] ports;
+        if (topPorts != null) {
+            ports = TopPorts.get(topPorts);
+            log.debug("Using top-{} ports", ports.length);
+        } else {
+            try {
+                ports = parsePorts(portRange);
+            } catch (IllegalArgumentException e) {
+                log.error("Invalid port range: {}", e.getMessage());
+                System.err.println("Error: Invalid port range — " + e.getMessage());
+                return 2;
+            }
         }
 
         // ── Configure Jackson ───────────────────────────────────────────────
@@ -240,15 +281,26 @@ public class ScanCommand implements Callable<Integer> {
         log.info("Starting scan of {} ({}) — {} ports, protocol={}", host, resolvedAddress.getHostAddress(), ports.length, protocol);
 
         // ── Run TCP scan ────────────────────────────────────────────────────
+        ProgressReporter reporter = new ProgressReporter(ports.length, System.console() != null && !noColor);
         ScanReport report = null;
         if ("tcp".equalsIgnoreCase(protocol) || "both".equalsIgnoreCase(protocol)) {
             if (useNio) {
                 System.out.println(color("@|cyan Using NIO non-blocking scanner (banner grabbing disabled).|@"));
                 NioPortScanner nioScanner = new NioPortScanner(timeout, serviceMapper);
-                report = nioScanner.scan(host, resolvedAddress, ports);
+                reporter.start();
+                try {
+                    report = nioScanner.scan(host, resolvedAddress, ports);
+                } finally {
+                    reporter.stop();
+                }
             } else {
                 PortScanner scanner = new PortScanner(threads, timeout, grabBanner, serviceMapper, useProbes, rate);
-                report = scanner.scan(host, resolvedAddress, ports);
+                reporter.start();
+                try {
+                    report = scanner.scan(host, resolvedAddress, ports, reporter);
+                } finally {
+                    reporter.stop();
+                }
             }
         }
 
@@ -275,17 +327,30 @@ public class ScanCommand implements Callable<Integer> {
             return 2;
         }
 
-        // ── CVE lookup ──────────────────────────────────────────────────────
+        // ── CVE lookup (parallel, NVD rate limit: 5 req/30s without API key) ──
         if (lookupCves && report.getOpenPorts() != null) {
             System.out.println("Looking up CVEs (NVD API — may be slow due to rate limits)...");
             CveLookup cveLookup = new CveLookup();
-            for (ScanResult result : report.getOpenPorts()) {
-                String keyword = cveLookup.extractKeyword(result.getServiceName(), result.getBanner());
-                if (!keyword.isBlank()) {
-                    List<String> cves = cveLookup.lookup(keyword);
-                    if (!cves.isEmpty()) result.setCves(cves);
-                }
-            }
+            Semaphore nvdLimit = new Semaphore(5);
+            List<CompletableFuture<Void>> cveFutures = report.getOpenPorts().stream()
+                .map(result -> CompletableFuture.runAsync(() -> {
+                    try {
+                        nvdLimit.acquire();
+                        try {
+                            String keyword = cveLookup.extractKeyword(result.getServiceName(), result.getBanner());
+                            if (!keyword.isBlank()) {
+                                List<String> cves = cveLookup.lookup(keyword);
+                                if (!cves.isEmpty()) result.setCves(cves);
+                            }
+                        } finally {
+                            nvdLimit.release();
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }))
+                .toList();
+            CompletableFuture.allOf(cveFutures.toArray(new CompletableFuture[0])).join();
         }
 
         // ── Print summary ───────────────────────────────────────────────────
