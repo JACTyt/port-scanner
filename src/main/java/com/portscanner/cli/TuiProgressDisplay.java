@@ -8,6 +8,8 @@ import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen;
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
+
+import java.nio.charset.Charset;
 import com.portscanner.model.PortStatus;
 import com.portscanner.model.ScanResult;
 import com.portscanner.scanner.PortScanner;
@@ -80,10 +82,11 @@ public class TuiProgressDisplay extends ProgressReporter {
         super(totalPorts, false); // disable parent JLine3 — TUI handles all display
         this.tuiTotalPorts = totalPorts;
         this.scanHost = host;
-        // Early availability check — throws IOException if no terminal.
-        // setAutoOpenTerminalEmulatorWindow(false) prevents Lanterna from attempting
-        // a Swing fallback (which throws "use javaw!" when running under java.exe).
-        DefaultTerminalFactory factory = new DefaultTerminalFactory();
+        // Force headless + stream-based ANSI terminal so Lanterna never tries the
+        // Windows native console API or Swing window (both fail under java.exe).
+        // This works in Windows Terminal, CMD, and any ANSI-capable terminal.
+        System.setProperty("java.awt.headless", "true");
+        DefaultTerminalFactory factory = new DefaultTerminalFactory(System.out, System.in, Charset.defaultCharset());
         factory.setForceTextTerminal(true);
         factory.setAutoOpenTerminalEmulatorWindow(false);
         this.screen = factory.createScreen();
