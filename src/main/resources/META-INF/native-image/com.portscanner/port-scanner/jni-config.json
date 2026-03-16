@@ -1,0 +1,22 @@
+[
+  {
+    "name": "com.sun.jna.Native",
+    "methods": [
+      { "name": "initIDs", "parameterTypes": [] }
+    ]
+  },
+  {
+    "name": "com.sun.jna.Pointer",
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.sun.jna.Structure",
+    "allDeclaredFields": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.sun.jna.NativeLong",
+    "allDeclaredConstructors": true,
+    "allDeclaredFields": true
+  }
+]

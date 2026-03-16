@@ -24,15 +24,341 @@
     "allDeclaredFields": true
   },
   {
-    "name": "com.portscanner.cli.ScanCommand",
+    "name": "com.portscanner.model.TlsInfo",
     "allDeclaredConstructors": true,
     "allDeclaredMethods": true,
     "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.model.HttpInfo",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.model.GeoLocation",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.model.ThreatInfo",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.model.AsnInfo",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.model.SubdomainResult",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.model.TracerouteHop",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.report.DiffReport",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.report.JsonExporter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.portscanner.report.CsvExporter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.portscanner.report.TextExporter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.portscanner.report.HtmlExporter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.portscanner.report.XmlExporter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.portscanner.report.NmapXmlExporter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
   },
   {
     "name": "com.portscanner.config.ScannerConfig",
     "allDeclaredConstructors": true,
     "allDeclaredMethods": true,
     "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.config.TimingProfile",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.config.ScanTimingConfig",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.cli.ScanCommand",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.cli.ScanCommand$UpdateDbCommand",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.Main",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.portscanner.plugin.ScanPlugin",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.portscanner.plugin.PluginContext",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "com.portscanner.plugin.builtin.HttpTitlePlugin",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.portscanner.plugin.builtin.SslCertPlugin",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.portscanner.plugin.builtin.SshVersionPlugin",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.fasterxml.jackson.datatype.jsr310.JavaTimeModule",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.fasterxml.jackson.datatype.jsr310.ser.LocalDateTimeSerializer",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.fasterxml.jackson.datatype.jsr310.deser.LocalDateTimeDeserializer",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.fasterxml.jackson.datatype.jsr310.ser.LocalDateSerializer",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.fasterxml.jackson.datatype.jsr310.deser.LocalDateDeserializer",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.fasterxml.jackson.datatype.jsr310.ser.InstantSerializer",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.fasterxml.jackson.dataformat.yaml.YAMLFactory",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.fasterxml.jackson.dataformat.yaml.YAMLMapper",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.fasterxml.jackson.dataformat.xml.XmlMapper",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.fasterxml.jackson.dataformat.xml.JacksonXmlModule",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.fasterxml.jackson.dataformat.xml.XmlFactory",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.slf4j.LoggerFactory",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.classic.spi.LogbackServiceProvider",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.classic.Logger",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "ch.qos.logback.classic.LoggerContext",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.core.ConsoleAppender",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.classic.encoder.PatternLayoutEncoder",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.classic.filter.ThresholdFilter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.classic.PatternLayout",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.classic.pattern.DateConverter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.classic.pattern.LevelConverter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.classic.pattern.LoggerConverter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.classic.pattern.MessageConverter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.classic.pattern.ThreadConverter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.core.pattern.LineSeparatorConverter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.core.pattern.LiteralConverter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.sqlite.JDBC",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.ARecord",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.AAAARecord",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.CNAMERecord",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.MXRecord",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.NSRecord",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.TXTRecord",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.SOARecord",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.PTRRecord",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.SRVRecord",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.EmptyRecord",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.UNKRecord",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.config.PropertyResolverConfigProvider",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "org.xbill.DNS.config.SunJVMResolverConfigProvider",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
   }
 ]

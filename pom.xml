@@ -164,6 +164,11 @@
                 <configuration>
                     <source>21</source>
                     <target>21</target>
+                    <compilerArgs>
+                        <!-- Tells picocli-codegen to emit GraalVM native-image configs under
+                             target/generated-sources/annotations/META-INF/native-image/picocli-generated/ -->
+                        <arg>-Aproject=${project.groupId}/${project.artifactId}</arg>
+                    </compilerArgs>
                     <annotationProcessorPaths>
                         <path>
                             <groupId>org.projectlombok</groupId>
@@ -260,8 +265,9 @@
                             <imageName>port-scanner</imageName>
                             <mainClass>com.portscanner.Main</mainClass>
                             <buildArgs>
-                                <buildArg>--no-fallback</buildArg>
-                                <buildArg>-H:+ReportExceptionStackTraces</buildArg>
+                                <!-- Core args are in META-INF/native-image/native-image.properties.
+                                     Only add args here that must be passed on the command line. -->
+                                <buildArg>-march=compatibility</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>
