@@ -5,17 +5,20 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write   # create GitHub Releases and upload assets
+  packages: write   # push images to GHCR
+
 jobs:
-  release:
-    name: Build and Release
+
+  # ── 1. Fat JAR ─────────────────────────────────────────────────────────────
+  build-jar:
+    name: Build fat JAR
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -24,9 +27,147 @@ jobs:
       - name: Build fat JAR
         run: mvn --batch-mode package -DskipTests
 
-      - name: Get tag name
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fat-jar
+          path: target/port-scanner-1.0-shaded.jar
+          if-no-files-found: error
+
+  # ── 2. Native image — Linux ─────────────────────────────────────────────────
+  native-linux:
+    name: Native image (Linux)
+    runs-on: ubuntu-latest
+    continue-on-error: true   # native build may fail until TASK-02 is complete
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system build dependencies
+        run: sudo apt-get install -y zlib1g-dev
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm-community'
+          native-image-job-reports: 'true'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build native image
+        run: mvn --batch-mode -Pnative package -DskipTests
+
+      - name: Upload Linux native binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linux
+          path: target/port-scanner
+          if-no-files-found: error
+
+  # ── 3. Native image — Windows ───────────────────────────────────────────────
+  native-windows:
+    name: Native image (Windows)
+    runs-on: windows-latest
+    continue-on-error: true   # native build may fail until TASK-02 is complete
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm-community'
+          native-image-job-reports: 'true'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build native image
+        run: mvn --batch-mode -Pnative package -DskipTests
+
+      - name: Upload Windows native binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-windows
+          path: target/port-scanner.exe
+          if-no-files-found: error
+
+  # ── 4. Docker image → GHCR ──────────────────────────────────────────────────
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    continue-on-error: true   # don't block release if GHCR push fails
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract tag name
         id: tag
         run: echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.TAG }}
+            ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── 5. GitHub Release ────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-jar, native-linux, native-windows, docker]
+    # Run even if native/docker jobs failed; require fat JAR to succeed.
+    if: always() && needs.build-jar.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract tag name
+        id: tag
+        run: echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Download fat JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: fat-jar
+          path: dist/
+
+      - name: Download Linux native binary
+        uses: actions/download-artifact@v4
+        continue-on-error: true   # artifact absent if native build failed
+        with:
+          name: native-linux
+          path: dist/
+
+      - name: Download Windows native binary
+        uses: actions/download-artifact@v4
+        continue-on-error: true   # artifact absent if native build failed
+        with:
+          name: native-windows
+          path: dist/
+
+      - name: Rename native binaries
+        run: |
+          [ -f dist/port-scanner ]     && mv dist/port-scanner     dist/port-scanner-linux        || true
+          [ -f dist/port-scanner.exe ] && mv dist/port-scanner.exe dist/port-scanner-windows.exe  || true
+
+      - name: Create distribution tarball
+        run: |
+          dir="port-scanner-${{ steps.tag.outputs.TAG }}"
+          mkdir -p "$dir"
+          cp dist/port-scanner-1.0-shaded.jar "$dir/"
+          cp docker-run.sh  "$dir/" 2>/dev/null || true
+          cp docker-run.ps1 "$dir/" 2>/dev/null || true
+          cp run.bat        "$dir/" 2>/dev/null || true
+          tar czf "dist/port-scanner-${{ steps.tag.outputs.TAG }}.tar.gz" "$dir/"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -36,11 +177,33 @@ jobs:
           body: |
             ## Port Scanner ${{ steps.tag.outputs.TAG }}
 
-            ### Installation
-            Download `port-scanner-*-jar-with-dependencies.jar` and run:
+            ### Download
+
+            | Artifact | Platform | Requirement |
+            |----------|----------|-------------|
+            | `port-scanner-linux` | Linux x86_64 | None — standalone native binary |
+            | `port-scanner-windows.exe` | Windows x86_64 | None — standalone native binary |
+            | `port-scanner-1.0-shaded.jar` | All platforms | Java 21+ |
+            | `port-scanner-*.tar.gz` | All platforms | JAR + convenience scripts |
+
+            ### Usage
+
             ```bash
-            java -jar port-scanner-*-jar-with-dependencies.jar --host <host> --ports 1-1024
+            # Universal fat JAR (Java 21+ required)
+            java -jar port-scanner-1.0-shaded.jar --host localhost --ports 1-1024
+
+            # Native binary (Linux — no Java required)
+            chmod +x port-scanner-linux
+            ./port-scanner-linux --host localhost --ports 1-1024
+
+            # Docker (Linux host network)
+            docker pull ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.TAG }}
+            docker run -it --rm --network=host \
+              ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.TAG }} \
+              --host localhost --ports 1-1024
             ```
-          files: target/port-scanner-*-jar-with-dependencies.jar
+
+            > **Ethical notice:** Only scan systems you own or have explicit written authorisation to scan.
+          files: dist/*
           draft: false
           prerelease: ${{ contains(steps.tag.outputs.TAG, '-') }}

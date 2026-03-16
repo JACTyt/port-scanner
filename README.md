@@ -52,6 +52,57 @@ The batch file uses IntelliJ's bundled Maven. If Maven is on your PATH, use `mvn
 
 ---
 
+## Docker
+
+The scanner is available as a Docker image — no Java installation required on the host.
+
+### Build the image locally
+
+```bash
+docker build -t port-scanner .
+```
+
+### Run
+
+```bash
+# Scan localhost inside the container
+docker run -it --rm --network=host port-scanner --host localhost --ports 1-1024
+
+# Save the report to a local reports/ directory
+docker run -it --rm --network=host \
+  -v ./reports:/reports \
+  port-scanner --host localhost --ports 1-1024 -o /reports/scan.html
+```
+
+Or use the convenience wrappers (they create a `reports/` directory automatically):
+
+```bash
+# Linux / macOS
+chmod +x docker-run.sh
+./docker-run.sh --host localhost --ports 1-1024
+
+# Windows PowerShell
+.\docker-run.ps1 --host localhost --ports 1-1024
+```
+
+### Pull a release image from GHCR
+
+```bash
+docker pull ghcr.io/<owner>/port-scanner:latest
+docker run -it --rm --network=host ghcr.io/<owner>/port-scanner:latest --host localhost
+```
+
+### Network and privilege caveats
+
+| Concern | Details |
+|---------|---------|
+| **LAN access** | `--network=host` is Linux-only. On Windows/Mac, Docker runs inside a VM so the container sees the VM's network, not your host LAN. Run natively with `run.bat` to scan your local network on Windows. |
+| **UDP scanning** | Requires `--cap-add=NET_RAW` (included in the wrapper scripts). |
+| **Interactive prompt** | Always use `-it` — the ethical confirmation prompt reads from stdin. |
+| **Output files** | Mount a volume with `-v ./reports:/reports` and write to `/reports/` or files are lost when the container exits. |
+
+---
+
 ## Quick Start
 
 ```bash
