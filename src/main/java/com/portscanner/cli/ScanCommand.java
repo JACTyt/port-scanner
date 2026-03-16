@@ -5,9 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.portscanner.config.ConfigLoader;
+import com.portscanner.config.ProfileLoader;
+import com.portscanner.config.ScanProfile;
 import com.portscanner.config.ScannerConfig;
 import com.portscanner.config.ScanTimingConfig;
 import com.portscanner.config.TimingProfile;
+import com.portscanner.db.ScanHistoryDao;
+import com.portscanner.model.MultiHostReport;
+import com.portscanner.scanner.MultiHostScanner;
 import com.portscanner.plugin.PluginContext;
 import com.portscanner.plugin.PluginRegistry;
 import com.portscanner.plugin.ScanPlugin;
@@ -67,7 +72,7 @@ import java.util.stream.Collectors;
         mixinStandardHelpOptions = true,
         version = "2.0",
         description = "A fast multithreaded TCP/UDP port scanner. Only use on systems you own or have explicit authorization to scan.",
-        subcommands = {ScanCommand.UpdateDbCommand.class}
+        subcommands = {ScanCommand.UpdateDbCommand.class, HistoryCommand.class}
 )
 public class ScanCommand implements Callable<Integer> {
 
@@ -195,6 +200,33 @@ public class ScanCommand implements Callable<Integer> {
             description = "Comma-separated plugin names to run, or 'all'. E.g. --scripts http-title,ssl-cert")
     private String scripts;
 
+    // ── Multi-host file mode ──────────────────────────────────────────────────
+    @Option(names = "--hosts-file",
+            description = "Scan multiple hosts from a file (one host or CIDR per line, # = comment). "
+                    + "Mutually exclusive with --host, --subnet, --auto-discover.")
+    private String hostsFile;
+
+    @Option(names = "--host-parallelism", defaultValue = "4",
+            description = "Max concurrent host scans when using --hosts-file. Default: 4")
+    private int hostParallelism;
+
+    // ── Scan history ──────────────────────────────────────────────────────────
+    @Option(names = "--save-history",
+            description = "Persist scan result to ~/.portscanner/history.db")
+    private boolean saveHistory;
+
+    @Option(names = "--history-diff",
+            description = "Auto-diff current scan against the most recent entry for the same host "
+                    + "in the history database. Requires at least one prior --save-history run.")
+    private boolean historyDiff;
+
+    // ── Scan profile ──────────────────────────────────────────────────────────
+    @Option(names = "--profile",
+            description = "Load a named scan profile: quick, web, db, full, stealth. "
+                    + "Custom profiles can be defined in ~/.portscanner/profiles.yaml. "
+                    + "CLI flags always override profile defaults.")
+    private String profile;
+
     @Override
     public Integer call() throws Exception {
         // ── Verbose / color setup ───────────────────────────────────────────
@@ -215,6 +247,24 @@ public class ScanCommand implements Callable<Integer> {
         if ("1-1024".equals(portRange) && config.getPorts() != null) portRange = config.getPorts();
         if (!grabBanner  && Boolean.TRUE.equals(config.getBanner()))  grabBanner  = true;
         if (!showAll     && Boolean.TRUE.equals(config.getShowAll())) showAll     = true;
+
+        // ── Apply scan profile (sets defaults; CLI flags override) ──────────────
+        if (profile != null) {
+            ScanProfile scanProfile = ProfileLoader.load(profile).orElseGet(() -> {
+                System.err.println("Warning: unknown profile '" + profile
+                        + "'. Available: " + String.join(", ", ProfileLoader.listAll()));
+                return new ScanProfile();
+            });
+            if (scanProfile.getPorts() != null && "1-1024".equals(portRange))            portRange   = scanProfile.getPorts();
+            if (scanProfile.getTopPorts() != null && topPorts == null)                   topPorts    = scanProfile.getTopPorts();
+            if (scanProfile.getBanner() != null && !grabBanner)                          grabBanner  = scanProfile.getBanner();
+            if (scanProfile.getProbes() != null && !useProbes)                           useProbes   = scanProfile.getProbes();
+            if (scanProfile.getTls() != null && !tlsInspect)                             tlsInspect  = scanProfile.getTls();
+            if (scanProfile.getHttp() != null && !httpInspect)                           httpInspect = scanProfile.getHttp();
+            if (scanProfile.getGeolocate() != null && !geolocate)                        geolocate   = scanProfile.getGeolocate();
+            if (scanProfile.getTiming() != null && "NORMAL".equalsIgnoreCase(timingInput)) timingInput = scanProfile.getTiming();
+            if (scanProfile.getRate() != null && rate == 0)                              rate        = scanProfile.getRate();
+        }
 
         // ── Apply timing profile (only for unset options) ───────────────────
         TimingProfile timingProfile = TimingProfile.fromString(timingInput);
@@ -250,15 +300,19 @@ public class ScanCommand implements Callable<Integer> {
             }
         }
 
-        // ── Validate target: exactly one of --host / --subnet / --auto-discover ─
-        if (!autoDiscover && host == null && subnet == null) {
-            log.error("Must specify either --host, --subnet, or --auto-discover");
-            System.err.println("Error: specify either --host <host>, --subnet <cidr>, or --auto-discover");
+        // ── Validate target: exactly one of --host / --subnet / --auto-discover / --hosts-file ─
+        if (!autoDiscover && host == null && subnet == null && hostsFile == null) {
+            log.error("Must specify either --host, --subnet, --auto-discover, or --hosts-file");
+            System.err.println("Error: specify either --host <host>, --subnet <cidr>, --auto-discover, or --hosts-file <file>");
             return 2;
         }
         if (host != null && subnet != null) {
             log.error("Cannot specify both --host and --subnet");
             System.err.println("Error: --host and --subnet are mutually exclusive");
+            return 2;
+        }
+        if (hostsFile != null && (host != null || subnet != null || autoDiscover)) {
+            System.err.println("Error: --hosts-file is mutually exclusive with --host, --subnet, and --auto-discover");
             return 2;
         }
 
@@ -369,6 +423,34 @@ public class ScanCommand implements Callable<Integer> {
                         System.out.printf("    %-6d %s%n", p.getPort(),
                                 p.getServiceName() != null ? p.getServiceName() : "Unknown"));
             });
+            return 0;
+        }
+
+        // ── HOSTS-FILE mode ─────────────────────────────────────────────────
+        if (hostsFile != null) {
+            Path hostsPath = Path.of(hostsFile);
+            if (!hostsPath.toFile().exists()) {
+                System.err.println("Error: hosts file not found: " + hostsFile);
+                return 2;
+            }
+            System.out.println(color(String.format(
+                    "@|bold,cyan Scanning hosts from file|@ @|green %s|@ — %d ports, %d threads, %dms timeout",
+                    hostsFile, ports.length, threads, timeout)));
+            MultiHostScanner multiScanner = new MultiHostScanner(threads, timeout, grabBanner, serviceMapper, useProbes);
+            MultiHostReport multiReport = multiScanner.scan(hostsPath, ports, hostParallelism);
+            System.out.printf("%nMulti-host scan complete in %.2f seconds — %d hosts, %d with open ports%n",
+                    multiReport.getDurationMs() / 1000.0, multiReport.getTotalHosts(), multiReport.getHostsWithOpenPorts());
+            multiReport.getResults().forEach(r -> {
+                System.out.printf("%n  Host: %s (%s) — %d open ports%n",
+                        r.getHost(), r.getResolvedIp(), r.getOpenCount());
+                r.getOpenPorts().forEach(p ->
+                        System.out.printf("    %-6d %s%n", p.getPort(),
+                                p.getServiceName() != null ? p.getServiceName() : "Unknown"));
+            });
+            if (outputFile != null) {
+                objectMapper.writeValue(Path.of(outputFile).toFile(), multiReport);
+                System.out.println(color("@|green Report saved to:|@ " + outputFile));
+            }
             return 0;
         }
 
@@ -544,7 +626,7 @@ public class ScanCommand implements Callable<Integer> {
                     try {
                         nvdLimit.acquire();
                         try {
-                            String keyword = cveLookup.extractKeyword(result.getServiceName(), result.getBanner());
+                            String keyword = cveLookup.extractKeyword(result.getServiceName(), result.getVersion() != null ? result.getVersion() : result.getBanner());
                             if (!keyword.isBlank()) {
                                 List<String> cves = cveLookup.lookup(keyword);
                                 if (!cves.isEmpty()) result.setCves(cves);
@@ -702,6 +784,26 @@ public class ScanCommand implements Callable<Integer> {
         // ── Print summary ───────────────────────────────────────────────────
         printSummary(report, showAll);
 
+        // ── Auto-diff against history ────────────────────────────────────────
+        if (historyDiff) {
+            try {
+                ScanHistoryDao dao = new ScanHistoryDao();
+                Optional<ScanReport> mostRecent = dao.getMostRecent(host);
+                if (mostRecent.isPresent()) {
+                    ReportDiffer differ = new ReportDiffer();
+                    DiffReport diffReport = differ.diff(mostRecent.get(), report, "previous scan", "current scan");
+                    System.out.println();
+                    System.out.println("History diff (vs most recent scan for this host):");
+                    differ.printDiff(diffReport);
+                } else {
+                    System.out.println("No prior scan in history for: " + host);
+                }
+            } catch (Exception e) {
+                System.err.println("Warning: history diff failed — " + e.getMessage());
+                log.debug("History diff error", e);
+            }
+        }
+
         // ── Diff mode ───────────────────────────────────────────────────────
         if (diffFile != null) {
             try {
@@ -712,6 +814,17 @@ public class ScanCommand implements Callable<Integer> {
                 differ.printDiff(diffReport);
             } catch (Exception e) {
                 System.err.println("Warning: could not load diff file — " + e.getMessage());
+            }
+        }
+
+        // ── Save to history ──────────────────────────────────────────────────
+        if (saveHistory) {
+            try {
+                new ScanHistoryDao().save(report);
+                System.out.println(color("@|green History saved to:|@ ~/.portscanner/history.db"));
+            } catch (Exception e) {
+                System.err.println("Warning: could not save history — " + e.getMessage());
+                log.debug("History save error", e);
             }
         }
 

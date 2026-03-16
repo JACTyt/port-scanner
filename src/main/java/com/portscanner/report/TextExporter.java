@@ -76,13 +76,15 @@ public class TextExporter implements ReportExporter {
             if (open == null || open.isEmpty()) {
                 w.println("(none)");
             } else {
-                w.printf("%-8s %-10s %-16s %-12s %s%n", "PORT", "STATE", "SERVICE", "RESPONSE", "BANNER");
+                w.printf("%-8s %-10s %-16s %-20s %-10s %s%n",
+                        "PORT", "STATE", "SERVICE", "VERSION", "RESPONSE", "BANNER");
                 for (ScanResult r : open) {
                     String hostPart = r.getHostname() != null ? " (" + r.getHostname() + ")" : "";
-                    w.printf("%-8d %-10s %-16s %-12s %s%s%n",
+                    w.printf("%-8d %-10s %-16s %-20s %-10s %s%s%n",
                             r.getPort(),
                             r.getStatus(),
                             nvl(r.getServiceName()),
+                            nvl(r.getVersion()),
                             r.getResponseTimeMs() + "ms",
                             nvl(r.getBanner()),
                             hostPart);

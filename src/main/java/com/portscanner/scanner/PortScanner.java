@@ -4,6 +4,7 @@ import com.portscanner.model.PortStatus;
 import com.portscanner.model.ScanReport;
 import com.portscanner.model.ScanResult;
 import com.portscanner.service.ServiceMapper;
+import com.portscanner.service.VersionExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -93,13 +94,15 @@ public class PortScanner {
             long responseTime = System.currentTimeMillis() - start;
 
             String serviceName = serviceMapper.getService(port);
-            String banner = grabBanner ? bannerGrabber.grabBanner(host, port, timeoutMs) : null;
+            String banner  = grabBanner ? bannerGrabber.grabBanner(host, port, timeoutMs) : null;
+            String version = grabBanner ? VersionExtractor.extract(serviceName, banner) : null;
 
             return ScanResult.builder()
                     .port(port)
                     .status(PortStatus.OPEN)
                     .serviceName(serviceName)
                     .banner(banner)
+                    .version(version)
                     .responseTimeMs(responseTime)
                     .build();
 

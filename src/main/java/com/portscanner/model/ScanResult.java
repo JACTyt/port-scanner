@@ -18,6 +18,8 @@ public class ScanResult {
     private PortStatus status;
     private String serviceName;
     private String banner;
+    /** Version string extracted from the banner by {@code VersionExtractor}. */
+    private String version;
     private long responseTimeMs;
     private List<String> cves;
     private String hostname;
