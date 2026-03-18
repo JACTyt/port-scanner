@@ -1,5 +1,6 @@
 package com.portscanner.report;
 
+import com.portscanner.model.OsGuess;
 import com.portscanner.model.PortStatus;
 import com.portscanner.model.ScanReport;
 import com.portscanner.model.ScanResult;
@@ -57,8 +58,8 @@ class NmapXmlExporterTest {
         DocumentBuilder db = DocumentBuilderFactory.newInstance().newDocumentBuilder();
         Document doc = db.parse(out.toFile());
         var root = doc.getDocumentElement();
-        assertEquals("portscanner", root.getAttribute("scanner"));
-        assertEquals("1.05", root.getAttribute("xmloutputversion"));
+        assertEquals("nmap", root.getAttribute("scanner"));
+        assertEquals("1.04", root.getAttribute("xmloutputversion"));
     }
 
     @Test
@@ -93,6 +94,22 @@ class NmapXmlExporterTest {
         Document doc = db.parse(out.toFile());
         NodeList runstats = doc.getElementsByTagName("runstats");
         assertEquals(1, runstats.getLength());
+    }
+
+    @Test
+    void os_block_written_when_os_guess_present() throws Exception {
+        ScanReport report = buildReport().toBuilder()
+                .osGuess(OsGuess.builder().os("Linux 5.x").confidence("high").method("ssh-banner").build())
+                .build();
+        Path out = tempDir.resolve("scan.nmap");
+        new NmapXmlExporter().export(report, out);
+
+        DocumentBuilder db = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+        Document doc = db.parse(out.toFile());
+        NodeList os = doc.getElementsByTagName("osmatch");
+        assertEquals(1, os.getLength());
+        assertEquals("Linux 5.x", os.item(0).getAttributes().getNamedItem("name").getNodeValue());
+        assertEquals("90", os.item(0).getAttributes().getNamedItem("accuracy").getNodeValue());
     }
 
     @Test

@@ -25,4 +25,5 @@ public class ScanResult {
     private String hostname;
     private TlsInfo tlsInfo;
     private HttpInfo httpInfo;
+    private SnmpInfo snmpInfo;
 }

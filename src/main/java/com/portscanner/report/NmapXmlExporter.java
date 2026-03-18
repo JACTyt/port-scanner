@@ -44,10 +44,13 @@ public class NmapXmlExporter implements ReportExporter {
                         ? HUMAN_FMT.format(report.getScannedAt().toInstant(ZoneOffset.UTC))
                         : "";
 
+                // Use scanner="nmap" and xmloutputversion="1.04" so Metasploit
+                // db_import recognises the format (it checks these attributes).
                 xml.writeStartElement("nmaprun");
-                xml.writeAttribute("scanner", "portscanner");
-                xml.writeAttribute("version", "2.0");
-                xml.writeAttribute("xmloutputversion", "1.05");
+                xml.writeAttribute("scanner", "nmap");
+                xml.writeAttribute("args", "portscanner -sT");
+                xml.writeAttribute("version", "7.94");
+                xml.writeAttribute("xmloutputversion", "1.04");
                 xml.writeAttribute("start", String.valueOf(startEpoch));
                 xml.writeAttribute("startstr", startStr);
                 xml.writeCharacters("\n  ");
@@ -105,6 +108,19 @@ public class NmapXmlExporter implements ReportExporter {
                 }
                 xml.writeCharacters("\n    ");
                 xml.writeEndElement(); // ports
+
+                // Optional OS block — consumed by Metasploit db_import
+                if (report.getOsGuess() != null) {
+                    xml.writeCharacters("\n    ");
+                    xml.writeStartElement("os");
+                    xml.writeCharacters("\n      ");
+                    xml.writeEmptyElement("osmatch");
+                    xml.writeAttribute("name", report.getOsGuess().getOs());
+                    xml.writeAttribute("accuracy",
+                            confidenceToPercent(report.getOsGuess().getConfidence()));
+                    xml.writeCharacters("\n    ");
+                    xml.writeEndElement(); // os
+                }
                 xml.writeCharacters("\n  ");
 
                 xml.writeEndElement(); // host
@@ -135,5 +151,14 @@ public class NmapXmlExporter implements ReportExporter {
 
     private String nvl(String s) {
         return s != null ? s : "";
+    }
+
+    private static String confidenceToPercent(String confidence) {
+        if (confidence == null) return "50";
+        return switch (confidence) {
+            case "high"   -> "90";
+            case "medium" -> "70";
+            default       -> "40";
+        };
     }
 }

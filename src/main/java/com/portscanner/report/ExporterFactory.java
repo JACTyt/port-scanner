@@ -23,6 +23,9 @@ public class ExporterFactory {
                 case "md":
                 case "markdown": return new MarkdownExporter();
                 case "pdf":      return new PdfExporter();
+                case "rc":
+                case "msf":
+                case "metasploit": return new MetasploitRcExporter();
             }
         }
 
@@ -42,6 +45,8 @@ public class ExporterFactory {
             return new MarkdownExporter();
         } else if (lower.endsWith(".pdf")) {
             return new PdfExporter();
+        } else if (lower.endsWith(".rc")) {
+            return new MetasploitRcExporter();
         } else {
             return new TextExporter();
         }

@@ -40,6 +40,7 @@ import com.portscanner.scanner.HttpInspector;
 import com.portscanner.scanner.NioPortScanner;
 import com.portscanner.scanner.OsFingerprinter;
 import com.portscanner.scanner.PortScanner;
+import com.portscanner.scanner.SnmpScanner;
 import com.portscanner.scanner.TlsInspector;
 import com.portscanner.scanner.TopPorts;
 import com.portscanner.scanner.UdpScanner;
@@ -78,7 +79,7 @@ import java.util.stream.Collectors;
         mixinStandardHelpOptions = true,
         version = "2.0",
         description = "A fast multithreaded TCP/UDP port scanner. Only use on systems you own or have explicit authorization to scan.",
-        subcommands = {ScanCommand.UpdateDbCommand.class, HistoryCommand.class}
+        subcommands = {ScanCommand.UpdateDbCommand.class, HistoryCommand.class, ReplCommand.class}
 )
 public class ScanCommand implements Callable<Integer> {
 
@@ -277,6 +278,15 @@ public class ScanCommand implements Callable<Integer> {
     @Option(names = "--topology-output",
             description = "Write a network topology diagram to file. Extension selects format: .dot (Graphviz) or .mmd (Mermaid)")
     private String topologyOutput;
+
+    // ── SNMP scanning ──────────────────────────────────────────────────────────
+    @Option(names = "--snmp",
+            description = "Probe open UDP 161 for SNMP after TCP scan completes")
+    private boolean snmp;
+
+    @Option(names = "--snmp-community", defaultValue = "public,private",
+            description = "Comma-separated SNMP community strings to try. Default: public,private")
+    private String snmpCommunity;
 
     @Override
     public Integer call() throws Exception {
@@ -856,6 +866,30 @@ public class ScanCommand implements Callable<Integer> {
             if (guess != null) {
                 report = report.toBuilder().osGuess(guess).build();
             }
+        }
+
+        // ── SNMP probe ───────────────────────────────────────────────────────
+        if (snmp) {
+            System.out.println(color("@|cyan Probing SNMP (UDP 161)...|@"));
+            SnmpScanner snmpScanner = new SnmpScanner(Math.max(timeout, 1000),
+                    SnmpScanner.parseCommunities(snmpCommunity));
+            final ScanReport snmpReport = report;
+            snmpScanner.probe(resolvedAddress).ifPresent(info -> {
+                System.out.println(color(String.format(
+                        "@|cyan SNMP:|@ sysName=@|white %s|@ sysDescr=@|white %s|@",
+                        info.getSysName() != null ? info.getSysName() : "—",
+                        info.getSysDescr() != null ? info.getSysDescr() : "—")));
+                if (info.getSysLocation() != null)
+                    System.out.println(color("       location=" + info.getSysLocation()));
+                // Attach to any port-161 result if present
+                if (snmpReport.getOpenPorts() != null) {
+                    snmpReport.getOpenPorts().stream()
+                            .filter(r -> r.getPort() == 161)
+                            .findFirst()
+                            .ifPresent(r -> r.setSnmpInfo(info));
+                }
+                log.info("SNMP response from {} community={}", host, info.getCommunity());
+            });
         }
 
         // ── Populate TUI open ports table (if TUI was used) ─────────────────
