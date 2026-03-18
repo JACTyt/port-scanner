@@ -28,16 +28,20 @@ import com.portscanner.report.DiffReport;
 import com.portscanner.report.ExporterFactory;
 import com.portscanner.report.ReportDiffer;
 import com.portscanner.report.ReportExporter;
+import com.portscanner.api.ScanApiServer;
+import com.portscanner.model.OsGuess;
 import com.portscanner.scanner.CidrScanner;
 import com.portscanner.scanner.DnsBruteForcer;
 import com.portscanner.scanner.HostDiscovery;
 import com.portscanner.scanner.NetworkInterfaceScanner;
 import com.portscanner.scanner.HttpInspector;
 import com.portscanner.scanner.NioPortScanner;
+import com.portscanner.scanner.OsFingerprinter;
 import com.portscanner.scanner.PortScanner;
 import com.portscanner.scanner.TlsInspector;
 import com.portscanner.scanner.TopPorts;
 import com.portscanner.scanner.UdpScanner;
+import com.portscanner.scanner.WatchMode;
 import com.portscanner.service.AbuseIpDbClient;
 import com.portscanner.service.AsnLookup;
 import com.portscanner.service.CveLookup;
@@ -227,6 +231,37 @@ public class ScanCommand implements Callable<Integer> {
                     + "CLI flags always override profile defaults.")
     private String profile;
 
+    // ── REST API server mode ───────────────────────────────────────────────────
+    @Option(names = "--serve",
+            description = "Start an embedded REST API server instead of running a one-off scan")
+    private boolean serve;
+
+    @Option(names = "--serve-port", defaultValue = "8080",
+            description = "Port for the REST API server. Default: 8080")
+    private int servePort;
+
+    @Option(names = "--serve-auth",
+            description = "Require X-API-Key header on all API requests (set to your chosen key)")
+    private String serveAuth;
+
+    // ── Watch / scheduled mode ─────────────────────────────────────────────────
+    @Option(names = "--watch",
+            description = "Re-scan the target repeatedly, printing only diffs. Runs until Ctrl+C.")
+    private boolean watch;
+
+    @Option(names = "--watch-interval", defaultValue = "60",
+            description = "Minutes between scans in watch mode. Default: 60")
+    private int watchInterval;
+
+    @Option(names = "--watch-alert",
+            description = "Print an alert line whenever a port opens or closes in watch mode")
+    private boolean watchAlert;
+
+    // ── OS / TTL fingerprinting ────────────────────────────────────────────────
+    @Option(names = "--os",
+            description = "Attempt OS fingerprinting via TTL heuristics and banner analysis (adds latency)")
+    private boolean osDetect;
+
     @Override
     public Integer call() throws Exception {
         // ── Verbose / color setup ───────────────────────────────────────────
@@ -298,6 +333,33 @@ public class ScanCommand implements Callable<Integer> {
                 System.err.println("Error: --proxy port is not a valid integer");
                 return 2;
             }
+        }
+
+        // ── REST API server mode ─────────────────────────────────────────────
+        if (serve) {
+            try {
+                ScanApiServer apiServer = new ScanApiServer(servePort, serveAuth);
+                System.out.println(color(String.format(
+                        "@|bold,cyan REST API server started|@ on @|green http://localhost:%d|@%n"
+                        + "  POST   /scan          – submit a scan job%n"
+                        + "  GET    /scan/{id}     – get status + results%n"
+                        + "  GET    /scan/{id}/stream – SSE live progress%n"
+                        + "  GET    /scans         – list recent jobs%n"
+                        + "  DELETE /scan/{id}     – cancel a job%n"
+                        + (serveAuth != null ? "  Auth:  X-API-Key header required%n" : "  Auth:  none%n"),
+                        servePort)));
+                apiServer.start();
+                // Block until Ctrl+C
+                Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                    System.out.println("\nShutting down API server...");
+                    apiServer.stop();
+                }));
+                Thread.currentThread().join();
+            } catch (Exception e) {
+                System.err.println("Error starting API server: " + e.getMessage());
+                return 1;
+            }
+            return 0;
         }
 
         // ── Validate target: exactly one of --host / --subnet / --auto-discover / --hosts-file ─
@@ -753,6 +815,17 @@ public class ScanCommand implements Callable<Integer> {
             report = report.toBuilder().tracerouteHops(hops).build();
         }
 
+        // ── OS fingerprinting ────────────────────────────────────────────────
+        if (osDetect) {
+            System.out.println(color("@|cyan Detecting OS...|@"));
+            OsFingerprinter fp = new OsFingerprinter();
+            OsGuess guess = fp.fingerprint(resolvedAddress,
+                    report.getOpenPorts() != null ? report.getOpenPorts() : List.of());
+            if (guess != null) {
+                report = report.toBuilder().osGuess(guess).build();
+            }
+        }
+
         // ── Populate TUI open ports table (if TUI was used) ─────────────────
         if (reporter instanceof TuiProgressDisplay tuiDisplay) {
             tuiDisplay.setOpenPorts(report.getOpenPorts() != null ? report.getOpenPorts() : List.of());
@@ -829,13 +902,66 @@ public class ScanCommand implements Callable<Integer> {
         }
 
         // ── Export to file ──────────────────────────────────────────────────
-        if (outputFile != null) {
+        if (outputFile != null && !watch) {
             ReportExporter exporter = ExporterFactory.getExporter(outputFile, format, objectMapper);
             exporter.export(report, Path.of(outputFile));
             System.out.println(color("@|green Report saved to:|@ " + outputFile));
         }
 
+        // ── Watch mode ───────────────────────────────────────────────────────
+        if (watch) {
+            final int[]    finalPorts   = ports;
+            final InetAddress finalAddr = resolvedAddress;
+            final Proxy    finalProxy   = proxyObj;
+            final ScanReport firstReport = report;
+
+            // Export the first scan result (already done above outside watch loop)
+            if (outputFile != null) {
+                String timestamped = watchOutputName(outputFile, 1);
+                ReportExporter exporter = ExporterFactory.getExporter(timestamped, format, objectMapper);
+                exporter.export(firstReport, Path.of(timestamped));
+                System.out.println(color("@|green Report saved to:|@ " + timestamped));
+            }
+
+            WatchMode watchMode = new WatchMode(watchInterval, watchAlert, saveHistory);
+            int[] scanIndex = {1};
+            watchMode.run(host, () -> {
+                // Each re-scan reuses the same scanner configuration
+                PortScanner sc = new PortScanner(threads, timeout, grabBanner, new ServiceMapper(),
+                        useProbes, rate, finalProxy);
+                try {
+                    ScanReport r = sc.scan(host, finalAddr, finalPorts);
+                    if (osDetect) {
+                        OsGuess g = new OsFingerprinter().fingerprint(finalAddr,
+                                r.getOpenPorts() != null ? r.getOpenPorts() : List.of());
+                        if (g != null) r = r.toBuilder().osGuess(g).build();
+                    }
+                    return r;
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }, eachReport -> {
+                if (outputFile != null) {
+                    scanIndex[0]++;
+                    String timestamped = watchOutputName(outputFile, scanIndex[0]);
+                    try {
+                        ReportExporter exporter = ExporterFactory.getExporter(timestamped, format, objectMapper);
+                        exporter.export(eachReport, Path.of(timestamped));
+                    } catch (Exception e) {
+                        log.warn("Failed to export watch scan report: {}", e.getMessage());
+                    }
+                }
+            });
+        }
+
         return 0;
+    }
+
+    /** Produces e.g. scan.json → scan-001.json, scan-002.json */
+    private static String watchOutputName(String outputFile, int index) {
+        int dot = outputFile.lastIndexOf('.');
+        if (dot < 0) return outputFile + String.format("-%03d", index);
+        return outputFile.substring(0, dot) + String.format("-%03d", index) + outputFile.substring(dot);
     }
 
     private InetAddress resolvePreferIPv6(String host) throws java.net.UnknownHostException {
@@ -875,6 +1001,14 @@ public class ScanCommand implements Callable<Integer> {
         System.out.println(color(String.format(
                 "%n@|bold,cyan Scan complete|@ in @|yellow %.2f|@ seconds — @|green %d open|@, @|yellow %d filtered|@ out of @|white %d|@ scanned%n",
                 report.getDurationMs() / 1000.0, report.getOpenCount(), report.getFilteredCount(), report.getTotalScanned())));
+
+        // OS guess
+        if (report.getOsGuess() != null) {
+            var os = report.getOsGuess();
+            System.out.println(color(String.format(
+                    "@|cyan OS Guess:|@ @|white %s|@ (confidence: %s, method: %s)",
+                    os.getOs(), os.getConfidence(), os.getMethod())));
+        }
 
         // Threat info
         if (report.getThreatInfo() != null) {
