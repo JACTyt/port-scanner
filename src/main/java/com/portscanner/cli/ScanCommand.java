@@ -30,6 +30,8 @@ import com.portscanner.report.ReportDiffer;
 import com.portscanner.report.ReportExporter;
 import com.portscanner.api.ScanApiServer;
 import com.portscanner.model.OsGuess;
+import com.portscanner.report.TopologyExporter;
+import com.portscanner.service.WebhookClient;
 import com.portscanner.scanner.CidrScanner;
 import com.portscanner.scanner.DnsBruteForcer;
 import com.portscanner.scanner.HostDiscovery;
@@ -262,6 +264,20 @@ public class ScanCommand implements Callable<Integer> {
             description = "Attempt OS fingerprinting via TTL heuristics and banner analysis (adds latency)")
     private boolean osDetect;
 
+    // ── Webhook / notification ─────────────────────────────────────────────────
+    @Option(names = "--webhook",
+            description = "POST scan summary JSON to this URL on completion. Slack/Discord URLs auto-detected.")
+    private String webhook;
+
+    @Option(names = "--webhook-on-open-only",
+            description = "Only POST the webhook if at least one open port was found")
+    private boolean webhookOnOpenOnly;
+
+    // ── Topology visualization ─────────────────────────────────────────────────
+    @Option(names = "--topology-output",
+            description = "Write a network topology diagram to file. Extension selects format: .dot (Graphviz) or .mmd (Mermaid)")
+    private String topologyOutput;
+
     @Override
     public Integer call() throws Exception {
         // ── Verbose / color setup ───────────────────────────────────────────
@@ -485,6 +501,14 @@ public class ScanCommand implements Callable<Integer> {
                         System.out.printf("    %-6d %s%n", p.getPort(),
                                 p.getServiceName() != null ? p.getServiceName() : "Unknown"));
             });
+            if (topologyOutput != null) {
+                try {
+                    new TopologyExporter().export(subnetReport, Path.of(topologyOutput));
+                    System.out.println(color("@|green Topology diagram saved to:|@ " + topologyOutput));
+                } catch (Exception e) {
+                    System.err.println("Warning: topology export failed — " + e.getMessage());
+                }
+            }
             return 0;
         }
 
@@ -512,6 +536,14 @@ public class ScanCommand implements Callable<Integer> {
             if (outputFile != null) {
                 objectMapper.writeValue(Path.of(outputFile).toFile(), multiReport);
                 System.out.println(color("@|green Report saved to:|@ " + outputFile));
+            }
+            if (topologyOutput != null) {
+                try {
+                    new TopologyExporter().export(multiReport, Path.of(topologyOutput));
+                    System.out.println(color("@|green Topology diagram saved to:|@ " + topologyOutput));
+                } catch (Exception e) {
+                    System.err.println("Warning: topology export failed — " + e.getMessage());
+                }
             }
             return 0;
         }
@@ -898,6 +930,32 @@ public class ScanCommand implements Callable<Integer> {
             } catch (Exception e) {
                 System.err.println("Warning: could not save history — " + e.getMessage());
                 log.debug("History save error", e);
+            }
+        }
+
+        // ── Topology diagram ─────────────────────────────────────────────────
+        if (topologyOutput != null) {
+            try {
+                new TopologyExporter().export(report, Path.of(topologyOutput));
+                System.out.println(color("@|green Topology diagram saved to:|@ " + topologyOutput));
+            } catch (Exception e) {
+                System.err.println("Warning: topology export failed — " + e.getMessage());
+                log.debug("Topology export error", e);
+            }
+        }
+
+        // ── Webhook notification ──────────────────────────────────────────────
+        String effectiveWebhook = webhook != null ? webhook
+                : (config.getWebhook() != null ? config.getWebhook() : null);
+        boolean effectiveOnOpenOnly = webhookOnOpenOnly
+                || Boolean.TRUE.equals(config.getWebhookOnOpenOnly());
+        if (effectiveWebhook != null) {
+            boolean shouldSend = !effectiveOnOpenOnly || report.getOpenCount() > 0;
+            if (shouldSend) {
+                System.out.println(color("@|cyan Sending webhook...|@"));
+                new WebhookClient().send(report, effectiveWebhook);
+            } else {
+                log.debug("Webhook skipped (--webhook-on-open-only and no open ports)");
             }
         }
 

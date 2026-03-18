@@ -21,4 +21,6 @@ public class ScannerConfig {
     private String abuseIpDbKey;
     private String greynoiseKey;
     private String ipinfoToken;
+    private String webhook;
+    private Boolean webhookOnOpenOnly;
 }

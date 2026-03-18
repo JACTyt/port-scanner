@@ -12,14 +12,17 @@ public class ExporterFactory {
         // --format flag takes precedence over file extension
         if (format != null && !format.isBlank()) {
             switch (format.toLowerCase()) {
-                case "json":   return new JsonExporter(objectMapper);
-                case "csv":    return new CsvExporter();
-                case "html":   return new HtmlExporter();
-                case "xml":    return new XmlExporter();
+                case "json":     return new JsonExporter(objectMapper);
+                case "csv":      return new CsvExporter();
+                case "html":     return new HtmlExporter();
+                case "xml":      return new XmlExporter();
                 case "txt":
-                case "text":   return new TextExporter();
+                case "text":     return new TextExporter();
                 case "nmap-xml":
-                case "nmap":   return new NmapXmlExporter();
+                case "nmap":     return new NmapXmlExporter();
+                case "md":
+                case "markdown": return new MarkdownExporter();
+                case "pdf":      return new PdfExporter();
             }
         }
 
@@ -35,6 +38,10 @@ public class ExporterFactory {
             return new XmlExporter();
         } else if (lower.endsWith(".nmap")) {
             return new NmapXmlExporter();
+        } else if (lower.endsWith(".md")) {
+            return new MarkdownExporter();
+        } else if (lower.endsWith(".pdf")) {
+            return new PdfExporter();
         } else {
             return new TextExporter();
         }
