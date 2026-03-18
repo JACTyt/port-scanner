@@ -40,8 +40,15 @@ import com.portscanner.scanner.HttpInspector;
 import com.portscanner.scanner.NioPortScanner;
 import com.portscanner.scanner.OsFingerprinter;
 import com.portscanner.scanner.PortScanner;
+import com.portscanner.config.PolicyEvaluator;
+import com.portscanner.config.PolicyLoader;
+import com.portscanner.config.PolicyRule;
+import com.portscanner.model.ShodanResult;
+import com.portscanner.report.JUnitXmlExporter;
+import com.portscanner.report.SarifExporter;
 import com.portscanner.scanner.SnmpScanner;
 import com.portscanner.scanner.TlsInspector;
+import com.portscanner.service.ShodanInternetDbClient;
 import com.portscanner.scanner.TopPorts;
 import com.portscanner.scanner.UdpScanner;
 import com.portscanner.scanner.WatchMode;
@@ -287,6 +294,20 @@ public class ScanCommand implements Callable<Integer> {
     @Option(names = "--snmp-community", defaultValue = "public,private",
             description = "Comma-separated SNMP community strings to try. Default: public,private")
     private String snmpCommunity;
+
+    // ── Shodan InternetDB enrichment ────────────────────────────────────────
+    @Option(names = "--shodan",
+            description = "Enrich results with Shodan InternetDB data (free, no API key required)")
+    private boolean shodan;
+
+    // ── CI / Policy gates ───────────────────────────────────────────────────
+    @Option(names = "--fail-on-open",
+            description = "Exit code 1 if any of these comma-separated ports are found open (e.g. 23,3389)")
+    private String failOnOpen;
+
+    @Option(names = "--policy-file",
+            description = "YAML policy file with rules evaluated post-scan. Overrides --fail-on-open.")
+    private String policyFile;
 
     @Override
     public Integer call() throws Exception {
@@ -892,6 +913,37 @@ public class ScanCommand implements Callable<Integer> {
             });
         }
 
+        // ── Shodan InternetDB enrichment ──────────────────────────────────────
+        if (shodan) {
+            String lookupIp = resolvedAddress.getHostAddress();
+            System.out.println(color("@|cyan Querying Shodan InternetDB for:|@ " + lookupIp));
+            Optional<ShodanResult> shodanOpt = new ShodanInternetDbClient().query(lookupIp);
+            if (shodanOpt.isPresent()) {
+                ShodanResult sr = shodanOpt.get();
+                report = report.toBuilder().shodanResult(sr).build();
+                List<Integer> shodanPorts = sr.getPorts() != null ? sr.getPorts() : List.of();
+                System.out.println(color(String.format(
+                        "@|cyan Shodan sees:|@ %d port(s): %s",
+                        shodanPorts.size(),
+                        shodanPorts.stream().map(String::valueOf).collect(Collectors.joining(", ")))));
+                if (sr.getVulns() != null && !sr.getVulns().isEmpty())
+                    System.out.println(color("@|red Shodan CVEs:|@ " + String.join(", ", sr.getVulns())));
+                if (sr.getTags() != null && !sr.getTags().isEmpty())
+                    System.out.println(color("@|yellow Shodan tags:|@ " + String.join(", ", sr.getTags())));
+                // Delta between Shodan and this scan
+                List<Integer> ourPorts = report.getOpenPorts() != null
+                        ? report.getOpenPorts().stream().map(ScanResult::getPort).toList() : List.of();
+                List<Integer> onlyInShodan = shodanPorts.stream().filter(p -> !ourPorts.contains(p)).toList();
+                List<Integer> onlyInOurs   = ourPorts.stream().filter(p -> !shodanPorts.contains(p)).toList();
+                if (!onlyInShodan.isEmpty())
+                    System.out.println(color("@|yellow In Shodan but not in this scan:|@ " +
+                            onlyInShodan.stream().map(String::valueOf).collect(Collectors.joining(", "))));
+                if (!onlyInOurs.isEmpty())
+                    System.out.println(color("@|green In this scan but not in Shodan:|@ " +
+                            onlyInOurs.stream().map(String::valueOf).collect(Collectors.joining(", "))));
+            }
+        }
+
         // ── Populate TUI open ports table (if TUI was used) ─────────────────
         if (reporter instanceof TuiProgressDisplay tuiDisplay) {
             tuiDisplay.setOpenPorts(report.getOpenPorts() != null ? report.getOpenPorts() : List.of());
@@ -993,9 +1045,62 @@ public class ScanCommand implements Callable<Integer> {
             }
         }
 
+        // ── Policy evaluation ────────────────────────────────────────────────
+        List<PolicyRule> policyRules = List.of();
+        if (policyFile != null) {
+            policyRules = PolicyLoader.load(Path.of(policyFile));
+        } else if (failOnOpen != null && !failOnOpen.isBlank()) {
+            // Build synthetic FAIL rules from --fail-on-open port list
+            List<PolicyRule> synthetic = new ArrayList<>();
+            for (String token : failOnOpen.split(",")) {
+                String t = token.trim();
+                if (t.isEmpty()) continue;
+                try {
+                    PolicyRule r = new PolicyRule();
+                    r.setPort(Integer.parseInt(t));
+                    r.setState("OPEN");
+                    r.setAction("FAIL");
+                    r.setName("port-" + t + "-blocked");
+                    r.setMessage("Port " + t + " is open — blocked by --fail-on-open");
+                    synthetic.add(r);
+                } catch (NumberFormatException ignored) {
+                    log.warn("--fail-on-open: '{}' is not a valid port number", t);
+                }
+            }
+            policyRules = synthetic;
+        }
+
+        List<PolicyEvaluator.PolicyViolation> violations = List.of();
+        if (!policyRules.isEmpty()) {
+            violations = PolicyEvaluator.evaluate(report, policyRules);
+            if (!violations.isEmpty()) {
+                System.out.println();
+                for (PolicyEvaluator.PolicyViolation v : violations) {
+                    String level = "FAIL".equalsIgnoreCase(v.rule().getAction()) ? "@|red,bold FAIL|@"
+                            : "WARN".equalsIgnoreCase(v.rule().getAction()) ? "@|yellow WARN|@" : "@|white INFO|@";
+                    String portStr = v.port() != null ? "port " + v.port().getPort() : "required port " + v.rule().getPort() + " missing";
+                    System.out.println(color(String.format("[%s] %s — %s",
+                            level, v.rule().getName() != null ? v.rule().getName() : portStr,
+                            v.rule().getMessage() != null ? v.rule().getMessage() : portStr)));
+                }
+            }
+        }
+
+        // Build fail-ports list for JUnit exporter
+        final List<Integer> failPortsList = policyRules.stream()
+                .filter(r -> "OPEN".equalsIgnoreCase(r.getState()))
+                .map(PolicyRule::getPort).filter(java.util.Objects::nonNull).toList();
+
         // ── Export to file ──────────────────────────────────────────────────
         if (outputFile != null && !watch) {
-            ReportExporter exporter = ExporterFactory.getExporter(outputFile, format, objectMapper);
+            // Use fail-port-aware JUnit exporter when applicable
+            ReportExporter exporter;
+            boolean isJunit = "junit".equalsIgnoreCase(format) || "junit-xml".equalsIgnoreCase(format);
+            if (!failPortsList.isEmpty() && isJunit) {
+                exporter = new JUnitXmlExporter(failPortsList);
+            } else {
+                exporter = ExporterFactory.getExporter(outputFile, format, objectMapper);
+            }
             exporter.export(report, Path.of(outputFile));
             System.out.println(color("@|green Report saved to:|@ " + outputFile));
         }
@@ -1046,7 +1151,7 @@ public class ScanCommand implements Callable<Integer> {
             });
         }
 
-        return 0;
+        return PolicyEvaluator.hasFatal(violations) ? 1 : 0;
     }
 
     /** Produces e.g. scan.json → scan-001.json, scan-002.json */

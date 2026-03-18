@@ -26,6 +26,9 @@ public class ExporterFactory {
                 case "rc":
                 case "msf":
                 case "metasploit": return new MetasploitRcExporter();
+                case "sarif":      return new SarifExporter();
+                case "junit":
+                case "junit-xml":  return new JUnitXmlExporter();
             }
         }
 
@@ -47,6 +50,8 @@ public class ExporterFactory {
             return new PdfExporter();
         } else if (lower.endsWith(".rc")) {
             return new MetasploitRcExporter();
+        } else if (lower.endsWith(".sarif")) {
+            return new SarifExporter();
         } else {
             return new TextExporter();
         }

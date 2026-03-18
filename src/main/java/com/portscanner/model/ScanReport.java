@@ -31,4 +31,5 @@ public class ScanReport {
     private List<TracerouteHop> tracerouteHops;
     private List<SubdomainResult> subdomains;
     private OsGuess osGuess;
+    private ShodanResult shodanResult;
 }
