@@ -13,8 +13,8 @@ A fast, multithreaded TCP/UDP port scanner written in Java 21. Built for network
 | **Scanning** | TCP connect scan, UDP scan, SNMP probe (SNMPv2c), CIDR/subnet scan, multi-host file scan, auto-discover local subnets |
 | **Performance** | Java 21 virtual threads, up to 1000 concurrent connections, nmap-style timing profiles (T0–T5) |
 | **Detection** | Service identification (220+ ports), banner grabbing, protocol-specific probes (HTTP, SSH, FTP, SMTP, MySQL, PostgreSQL, Redis, Memcached), service version extraction, OS/TTL fingerprinting |
-| **Enrichment** | TLS/SSL certificate inspection, HTTP header analysis, CVE lookup (NVD API + local SQLite cache), IP geolocation, AbuseIPDB reputation, GreyNoise threat intel, ASN lookup |
-| **Network** | IPv6 support, SOCKS5 proxy routing, traceroute, DNS subdomain brute-force, host discovery (ping sweep) |
+| **Enrichment** | TLS/SSL certificate inspection, HTTP header analysis, CVE lookup with CVSS v3/v2 scores (NVD API + local SQLite cache), unauthenticated service detection (Redis, FTP, Elasticsearch, Memcached, Prometheus, Actuator), IP geolocation, AbuseIPDB reputation, GreyNoise threat intel, ASN lookup |
+| **Network** | IPv6 support, SOCKS5 proxy routing, traceroute, DNS subdomain brute-force, DNS security audit (AXFR, open resolver, DNSSEC), host discovery (ping sweep) |
 | **Output** | JSON, CSV, TXT, HTML, XML, Nmap-XML, Markdown, PDF, Metasploit `.rc` resource scripts, Graphviz/Mermaid topology diagrams, scan diff mode |
 | **Automation** | REST API server, watch/scheduled mode, webhook notifications (Slack/Discord/custom), scan history database |
 | **Usability** | Interactive REPL shell, full-screen TUI, YAML config file, scan profiles, top-ports list (nmap frequency order), external plugin system |
@@ -162,6 +162,8 @@ java -jar $JAR shell
 | `--host-parallelism <n>` | `4` | Max concurrent host scans when using `--hosts-file` |
 | `--skip-discovery` | false | Skip ICMP reachability check before scanning |
 | `--use-nio` | false | Use NIO non-blocking scanner (legacy) |
+| `--quick` | false | Phase-1 fast sweep: 1000 threads, 100 ms timeout, no enrichment. Combine with `--deep` for a two-phase pipeline. |
+| `--deep` | false | Phase-2 deep enrichment on open ports (banner, TLS, CVE, unauth-detect, etc.). Runs standalone or automatically after `--quick`. |
 
 ### Service Detection
 
@@ -175,6 +177,7 @@ java -jar $JAR shell
 | `--os` | OS fingerprinting via TTL, SSH banner, HTTP `Server` header, and open port signals (RDP/SMB/WinRM) |
 | `--snmp` | Probe UDP port 161 for SNMP after the TCP scan (retrieves sysDescr, sysName, sysLocation, sysContact, ifNumber) |
 | `--snmp-community <list>` | `public,private` | Comma-separated SNMPv2c community strings to try in order |
+| `--unauth-detect` | Probe open ports for unauthenticated service access (Redis, Memcached, Elasticsearch, FTP anonymous, Prometheus, Spring Actuator) |
 
 ### Enrichment
 
@@ -183,6 +186,7 @@ java -jar $JAR shell
 | `--geolocate` | Geolocate the target IP via IPinfo.io (`IPINFO_TOKEN` optional) |
 | `--abuse-check` | Check IP reputation via AbuseIPDB (requires `ABUSEIPDB_KEY`) |
 | `--greynoise` | Check IP via GreyNoise Community API (requires `GREYNOISE_KEY`) |
+| `--fail-on-cvss <score>` | Exit with code 2 if any CVE with CVSS score ≥ threshold is found. Requires `--cve`. Example: `--fail-on-cvss 7.0` |
 
 ### Network
 
@@ -194,6 +198,8 @@ java -jar $JAR shell
 | `--traceroute-max-hops <n>` | Max hops for traceroute (default: 30) |
 | `--dns-brute-enable` | DNS subdomain brute-force using the bundled top-1000 wordlist |
 | `--dns-brute <wordlist>` | DNS subdomain brute-force using a custom wordlist file |
+| `--dns-audit` | Run DNS security audit: AXFR zone transfer attempt, open resolver check, DNSSEC validation, TCP-53 fallback |
+| `--dns-domain <domain>` | Domain for zone-transfer and DNSSEC checks during `--dns-audit`. If omitted, only open-resolver and TCP-53 tests run. |
 
 ### Output
 
@@ -606,6 +612,18 @@ java -jar $JAR --host 192.168.1.1 \
 java -jar $JAR --host 192.168.1.1 --os --banner -o scan.rc
 msfconsole -r scan.rc
 
+# Two-phase scan: fast sweep then deep enrichment only on open ports
+java -jar $JAR --host 192.168.1.1 --ports 1-65535 --quick --deep
+
+# DNS security audit
+java -jar $JAR --host 192.168.1.1 --dns-audit --dns-domain example.com
+
+# Unauthenticated service detection
+java -jar $JAR --host 192.168.1.1 --banner --unauth-detect
+
+# Fail CI if a critical CVE (CVSS >= 9.0) is found
+java -jar $JAR --host 192.168.1.1 --banner --cve --fail-on-cvss 9.0
+
 # Topology diagram
 java -jar $JAR --subnet 192.168.1.0/24 --ports 22,80,443 \
   --topology-output network.dot && dot -Tsvg network.dot -o network.svg
@@ -644,9 +662,13 @@ com.portscanner/
 │   ├── NetworkInterfaceScanner.java Local interface discovery
 │   ├── IPv6CidrEnumerator.java      IPv6 CIDR host enumeration
 │   ├── NdpCacheReader.java          NDP/ARP cache reader
+│   ├── UnauthDetector.java          Unauthenticated service detection coordinator
+│   ├── DnsAuditor.java              DNS security audit (AXFR, open resolver, DNSSEC)
 │   └── probe/                       Protocol-specific banner probes
 │       ├── HttpProbe, SshProbe, FtpProbe, SmtpProbe
-│       └── MysqlProbe, PostgresProbe, RedisProbe, MemcachedProbe
+│       ├── MysqlProbe, PostgresProbe, RedisProbe, MemcachedProbe
+│       └── RedisUnauthProbe, FtpAnonProbe, ElasticsearchUnauthProbe,
+│           MemcachedUnauthProbe, PromUnauthProbe, ActuatorUnauthProbe
 ├── model/
 │   ├── ScanResult.java              Per-port result (status, banner, TLS, CVEs, SNMP…)
 │   ├── ScanReport.java              Full scan report (includes OsGuess)
@@ -654,6 +676,9 @@ com.portscanner/
 │   ├── MultiHostReport.java         Aggregated multi-host scan
 │   ├── OsGuess.java                 OS fingerprint result
 │   ├── SnmpInfo.java                SNMP MIB-II data
+│   ├── CveEntry.java                CVE with CVSS v3/v2 score, severity, vector, description
+│   ├── UnauthResult.java            Unauthenticated access probe result
+│   ├── DnsAuditResult.java          DNS security audit findings
 │   └── (GeoLocation, TlsInfo, HttpInfo, ThreatInfo, AsnInfo, TracerouteHop, …)
 ├── service/
 │   ├── ServiceMapper.java           Port→service name (220+ entries)
