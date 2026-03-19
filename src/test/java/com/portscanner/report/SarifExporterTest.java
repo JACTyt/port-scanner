@@ -26,7 +26,10 @@ class SarifExporterTest {
                 .responseTimeMs(12).banner("Apache/2.4").build();
         ScanResult r22 = ScanResult.builder()
                 .port(22).status(PortStatus.OPEN).serviceName("SSH")
-                .responseTimeMs(5).cves(List.of("CVE-2023-38408", "CVE-2021-41617")).build();
+                .responseTimeMs(5).cves(List.of(
+                        com.portscanner.model.CveEntry.builder().id("CVE-2023-38408").build(),
+                        com.portscanner.model.CveEntry.builder().id("CVE-2021-41617").build()
+                )).build();
         return ScanReport.builder()
                 .host("example.com")
                 .resolvedIp("93.184.216.34")

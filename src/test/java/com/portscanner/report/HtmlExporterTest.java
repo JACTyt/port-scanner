@@ -102,7 +102,10 @@ class HtmlExporterTest {
     void cves_are_displayed_when_present() throws IOException {
         ScanResult r = ScanResult.builder()
                 .port(80).status(PortStatus.OPEN).serviceName("HTTP").responseTimeMs(5)
-                .cves(List.of("CVE-2024-1234", "CVE-2024-5678")).build();
+                .cves(List.of(
+                        com.portscanner.model.CveEntry.builder().id("CVE-2024-1234").build(),
+                        com.portscanner.model.CveEntry.builder().id("CVE-2024-5678").build()
+                )).build();
         String html = export(report(List.of(r), List.of()));
         assertTrue(html.contains("CVE-2024-1234"));
         assertTrue(html.contains("CVE-2024-5678"));

@@ -52,4 +52,16 @@ class ExporterFactoryTest {
         assertInstanceOf(HtmlExporter.class, ExporterFactory.getExporter("REPORT.HTML", objectMapper));
         assertInstanceOf(XmlExporter.class,  ExporterFactory.getExporter("REPORT.XML",  objectMapper));
     }
+
+    @Test
+    void xlsx_byExtension() {
+        assertInstanceOf(XlsxExporter.class,
+            ExporterFactory.getExporter("report.xlsx", null, objectMapper));
+    }
+
+    @Test
+    void xlsx_byFormat() {
+        assertInstanceOf(XlsxExporter.class,
+            ExporterFactory.getExporter(null, "xlsx", objectMapper));
+    }
 }

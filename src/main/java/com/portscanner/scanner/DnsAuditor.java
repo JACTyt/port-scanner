@@ -64,11 +64,21 @@ public class DnsAuditor {
 
                         // Attempt AXFR against this nameserver
                         try {
-                            SimpleResolver resolver = new SimpleResolver(nsIp);
-                            resolver.setTimeout(Duration.ofMillis(Math.min(timeoutMs, 5000)));
                             Name zoneName = Name.fromString(domain.endsWith(".") ? domain : domain + ".");
-                            ZoneTransferIn xfr = ZoneTransferIn.newAXFR(zoneName, resolver);
-                            List<Record> zoneRecords = xfr.run();
+                            ZoneTransferIn xfr = ZoneTransferIn.newAXFR(zoneName, nsIp, null);
+                            List<Record> zoneRecords = new ArrayList<>();
+                            xfr.run(new ZoneTransferIn.ZoneTransferHandler() {
+                                @Override
+                                public void startAXFR() {}
+                                @Override
+                                public void startIXFR() {}
+                                @Override
+                                public void startIXFRDeletes(Record soa) {}
+                                @Override
+                                public void startIXFRAdds(Record soa) {}
+                                @Override
+                                public void handleRecord(Record r) { zoneRecords.add(r); }
+                            });
                             if (!zoneRecords.isEmpty()) {
                                 zoneTransferAllowed = true;
                                 int limit = Math.min(zoneRecords.size(), 50);
