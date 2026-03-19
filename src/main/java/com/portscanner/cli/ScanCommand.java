@@ -44,10 +44,15 @@ import com.portscanner.config.PolicyEvaluator;
 import com.portscanner.config.PolicyLoader;
 import com.portscanner.config.PolicyRule;
 import com.portscanner.model.ShodanResult;
+import com.portscanner.model.SubdomainResult;
 import com.portscanner.report.JUnitXmlExporter;
 import com.portscanner.report.SarifExporter;
+import com.portscanner.scanner.HttpSecurityAuditor;
 import com.portscanner.scanner.SnmpScanner;
+import com.portscanner.scanner.SshAuditor;
+import com.portscanner.scanner.TlsAuditor;
 import com.portscanner.scanner.TlsInspector;
+import com.portscanner.service.CertTransparencyClient;
 import com.portscanner.service.ShodanInternetDbClient;
 import com.portscanner.scanner.TopPorts;
 import com.portscanner.scanner.UdpScanner;
@@ -308,6 +313,22 @@ public class ScanCommand implements Callable<Integer> {
     @Option(names = "--policy-file",
             description = "YAML policy file with rules evaluated post-scan. Overrides --fail-on-open.")
     private String policyFile;
+
+    // ── P2: Deep protocol auditing ──────────────────────────────────────────
+    @Option(names = "--tls-deep",
+            description = "Full TLS audit: enumerate cipher suites and detect known vulnerabilities "
+                    + "(BEAST, POODLE, SWEET32, Heartbleed, RC4, NULL ciphers). Implies --tls. Adds latency.")
+    private boolean tlsDeep;
+
+    @Option(names = "--ssh-audit",
+            description = "Parse SSH Key Exchange Init and flag weak algorithms (kex, ciphers, MACs). "
+                    + "Runs automatically on any open SSH port when specified.")
+    private boolean sshAudit;
+
+    @Option(names = "--ct-recon",
+            description = "Query Certificate Transparency logs (crt.sh) for subdomains of the given domain. "
+                    + "Discovered subdomains are displayed and stored in the report. Example: --ct-recon example.com")
+    private String ctRecon;
 
     @Override
     public Integer call() throws Exception {
@@ -741,6 +762,109 @@ public class ScanCommand implements Callable<Integer> {
             CompletableFuture.allOf(httpFutures.toArray(new CompletableFuture[0])).join();
         }
 
+        // ── TLS deep audit ───────────────────────────────────────────────────
+        if (tlsDeep && report.getOpenPorts() != null && !report.getOpenPorts().isEmpty()) {
+            System.out.println(color("@|cyan Running TLS deep audit (cipher enumeration + vulnerability detection)...|@"));
+            List<CompletableFuture<Void>> tlsAuditFutures = report.getOpenPorts().stream()
+                    .map(result -> CompletableFuture.runAsync(() -> {
+                        int port = result.getPort();
+                        boolean isTlsPort = TLS_PORTS.contains(port)
+                                || (result.getServiceName() != null
+                                    && result.getServiceName().toLowerCase().contains("https"));
+                        if (isTlsPort) {
+                            TlsAuditor.audit(host, port, timeout + 2000).ifPresent(auditResult -> {
+                                result.setTlsAuditResult(auditResult);
+                                // Print per-port summary
+                                int vulnCount = auditResult.getVulnerabilities() != null
+                                        ? auditResult.getVulnerabilities().size() : 0;
+                                int weakCount = auditResult.getWeakCiphers() != null
+                                        ? auditResult.getWeakCiphers().size() : 0;
+                                String protos = auditResult.getSupportedProtocols() != null
+                                        ? String.join(", ", auditResult.getSupportedProtocols()) : "—";
+                                System.out.println(color(String.format(
+                                        "  @|white Port %d TLS:|@ protocols=[%s] weakCiphers=%d vulns=%d",
+                                        port, protos, weakCount, vulnCount)));
+                                if (auditResult.getVulnerabilities() != null) {
+                                    for (var v : auditResult.getVulnerabilities()) {
+                                        String sev = switch (v.getSeverity() != null ? v.getSeverity() : "") {
+                                            case "CRITICAL" -> "@|red,bold " + v.getName() + "|@";
+                                            case "HIGH"     -> "@|red " + v.getName() + "|@";
+                                            case "MEDIUM"   -> "@|yellow " + v.getName() + "|@";
+                                            default         -> "@|white " + v.getName() + "|@";
+                                        };
+                                        System.out.println(color("    [" + v.getSeverity() + "] " + sev));
+                                    }
+                                }
+                            });
+                        }
+                    }))
+                    .toList();
+            CompletableFuture.allOf(tlsAuditFutures.toArray(new CompletableFuture[0])).join();
+        }
+
+        // ── SSH algorithm audit ──────────────────────────────────────────────
+        if (sshAudit && report.getOpenPorts() != null && !report.getOpenPorts().isEmpty()) {
+            System.out.println(color("@|cyan Auditing SSH algorithms (KEXINIT parser)...|@"));
+            List<CompletableFuture<Void>> sshAuditFutures = report.getOpenPorts().stream()
+                    .map(result -> CompletableFuture.runAsync(() -> {
+                        int port = result.getPort();
+                        boolean isSshPort = port == 22
+                                || (result.getServiceName() != null
+                                    && result.getServiceName().toLowerCase().contains("ssh"));
+                        if (isSshPort) {
+                            SshAuditor.audit(host, port, timeout + 1000).ifPresent(sshResult -> {
+                                result.setSshAuditResult(sshResult);
+                                int weakCount = sshResult.getWeakAlgorithms() != null
+                                        ? sshResult.getWeakAlgorithms().size() : 0;
+                                System.out.println(color(String.format(
+                                        "  @|white Port %d SSH:|@ %s — %d weak algorithm(s)",
+                                        port, sshResult.getServerVersion() != null
+                                                ? sshResult.getServerVersion() : "unknown",
+                                        weakCount)));
+                                if (sshResult.getWeakAlgorithms() != null && !sshResult.getWeakAlgorithms().isEmpty()) {
+                                    for (String weak : sshResult.getWeakAlgorithms()) {
+                                        System.out.println(color("    @|yellow [WEAK]|@ " + weak));
+                                    }
+                                }
+                            });
+                        }
+                    }))
+                    .toList();
+            CompletableFuture.allOf(sshAuditFutures.toArray(new CompletableFuture[0])).join();
+        }
+
+        // ── HTTP security header scoring (auto-runs with --http) ─────────────
+        if (httpInspect && report.getOpenPorts() != null && !report.getOpenPorts().isEmpty()) {
+            System.out.println(color("@|cyan Scoring HTTP security headers (OWASP Observatory model)...|@"));
+            List<CompletableFuture<Void>> secAuditFutures = report.getOpenPorts().stream()
+                    .map(result -> CompletableFuture.runAsync(() -> {
+                        int port = result.getPort();
+                        boolean isHttpPort = HTTP_PORTS.contains(port)
+                                || (result.getServiceName() != null &&
+                                    (result.getServiceName().toLowerCase().contains("http")
+                                     || result.getServiceName().toLowerCase().contains("web")));
+                        if (isHttpPort) {
+                            boolean useTls = port == 443 || port == 8443
+                                    || (result.getServiceName() != null
+                                        && result.getServiceName().toLowerCase().contains("https"));
+                            HttpSecurityAuditor.audit(host, port, useTls, timeout + 1000).ifPresent(auditResult -> {
+                                result.setHttpSecurityAuditResult(auditResult);
+                                String gradeColor = switch (auditResult.getGrade()) {
+                                    case "A+", "A" -> "@|green " + auditResult.getGrade() + "|@";
+                                    case "B"        -> "@|cyan " + auditResult.getGrade() + "|@";
+                                    case "C"        -> "@|yellow " + auditResult.getGrade() + "|@";
+                                    default         -> "@|red " + auditResult.getGrade() + "|@";
+                                };
+                                System.out.println(color(String.format(
+                                        "  @|white Port %d HTTP security:|@ Grade=%s (score=%d/100)",
+                                        port, gradeColor, auditResult.getScore())));
+                            });
+                        }
+                    }))
+                    .toList();
+            CompletableFuture.allOf(secAuditFutures.toArray(new CompletableFuture[0])).join();
+        }
+
         // ── CVE lookup (parallel, NVD rate limit: 5 req/30s without API key) ──
         if (lookupCves && report.getOpenPorts() != null) {
             System.out.println("Looking up CVEs (NVD API — may be slow due to rate limits)...");
@@ -969,6 +1093,49 @@ public class ScanCommand implements Callable<Integer> {
             } catch (Exception e) {
                 System.err.println("Warning: DNS brute-force failed — " + e.getMessage());
                 log.debug("DNS brute-force error", e);
+            }
+        }
+
+        // ── CT recon (Certificate Transparency log query) ────────────────────
+        if (ctRecon != null && !ctRecon.isBlank()) {
+            System.out.println(color(String.format(
+                    "%n@|cyan CT recon:|@ querying crt.sh for subdomains of @|white %s|@...", ctRecon.trim())));
+            try {
+                CertTransparencyClient ctClient = new CertTransparencyClient();
+                List<String> ctHosts = ctClient.findSubdomains(ctRecon.trim());
+                if (ctHosts.isEmpty()) {
+                    System.out.println(color("@|yellow No subdomains found in CT logs.|@"));
+                } else {
+                    System.out.printf("Found @|green %d|@ subdomain(s) in CT logs:%n", ctHosts.size());
+                    ctHosts.forEach(h -> System.out.println(color("  @|white " + h + "|@")));
+
+                    // Resolve each CT hostname and store as SubdomainResult
+                    List<SubdomainResult> ctSubdomainResults = new ArrayList<>();
+                    for (String ctHost : ctHosts) {
+                        try {
+                            InetAddress addr = InetAddress.getByName(ctHost);
+                            ctSubdomainResults.add(SubdomainResult.builder()
+                                    .subdomain(ctHost)
+                                    .addresses(List.of(addr.getHostAddress()))
+                                    .build());
+                        } catch (Exception ignored) {
+                            // Unresolvable — still record it
+                            ctSubdomainResults.add(SubdomainResult.builder()
+                                    .subdomain(ctHost)
+                                    .build());
+                        }
+                    }
+                    long resolved = ctSubdomainResults.stream()
+                            .filter(r -> r.getAddresses() != null && !r.getAddresses().isEmpty()).count();
+                    System.out.println(color(String.format(
+                            "@|cyan CT recon:|@ %d/%d subdomains resolved. "
+                                    + "Use --hosts-file to scan discovered hosts.",
+                            resolved, ctHosts.size())));
+                    report = report.toBuilder().ctSubdomains(ctSubdomainResults).build();
+                }
+            } catch (Exception e) {
+                System.err.println("Warning: CT recon failed — " + e.getMessage());
+                log.debug("CT recon error", e);
             }
         }
 

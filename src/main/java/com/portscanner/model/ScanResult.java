@@ -24,6 +24,9 @@ public class ScanResult {
     private List<String> cves;
     private String hostname;
     private TlsInfo tlsInfo;
+    private TlsAuditResult tlsAuditResult;
+    private SshAuditResult sshAuditResult;
     private HttpInfo httpInfo;
+    private HttpSecurityAuditResult httpSecurityAuditResult;
     private SnmpInfo snmpInfo;
 }

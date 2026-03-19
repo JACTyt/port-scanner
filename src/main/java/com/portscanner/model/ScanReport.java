@@ -30,6 +30,7 @@ public class ScanReport {
     private GeoLocation geoLocation;
     private List<TracerouteHop> tracerouteHops;
     private List<SubdomainResult> subdomains;
+    private List<SubdomainResult> ctSubdomains;
     private OsGuess osGuess;
     private ShodanResult shodanResult;
 }
