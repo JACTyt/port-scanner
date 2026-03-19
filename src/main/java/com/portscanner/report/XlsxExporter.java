@@ -44,6 +44,7 @@ public class XlsxExporter implements ReportExporter {
         addLabelValue(s, r++, "Duration (ms)", String.valueOf(report.getDurationMs()));
         addLabelValue(s, r++, "Open Ports", String.valueOf(report.getOpenCount()));
         addLabelValue(s, r++, "Filtered Ports", String.valueOf(report.getFilteredCount()));
+        addLabelValue(s, r++, "Total Scanned", String.valueOf(report.getTotalScanned()));
         if (report.getOsGuess() != null) {
             addLabelValue(s, r, "OS Guess", report.getOsGuess().getOs() + " (" + report.getOsGuess().getConfidence() + "%)");
         }
@@ -113,7 +114,7 @@ public class XlsxExporter implements ReportExporter {
 
     private void writeTlsSheet(XSSFWorkbook wb, ScanReport report, CellStyle headerStyle) {
         Sheet s = wb.createSheet("TLS Findings");
-        String[] cols = {"Port", "Subject", "Issuer", "Expires", "SANs"};
+        String[] cols = {"Port", "Subject", "Expires", "SANs", "Issuer"};
         writeHeader(s, cols, headerStyle);
         s.setAutoFilter(new CellRangeAddress(0, 0, 0, cols.length - 1));
 
@@ -126,9 +127,9 @@ public class XlsxExporter implements ReportExporter {
             Row row = s.createRow(r++);
             row.createCell(0).setCellValue(res.getPort());
             row.createCell(1).setCellValue(nvl(tls.getCertSubject()));
-            row.createCell(2).setCellValue(nvl(tls.getCertIssuer()));
-            row.createCell(3).setCellValue(tls.getCertExpiry() != null ? tls.getCertExpiry().toString() : "");
-            row.createCell(4).setCellValue(tls.getSubjectAltNames() != null ? String.join(", ", tls.getSubjectAltNames()) : "");
+            row.createCell(2).setCellValue(tls.getCertExpiry() != null ? tls.getCertExpiry().toString() : "");
+            row.createCell(3).setCellValue(tls.getSubjectAltNames() != null ? String.join(", ", tls.getSubjectAltNames()) : "");
+            row.createCell(4).setCellValue(nvl(tls.getCertIssuer()));
         }
         autoSizeColumns(s, cols.length);
     }
