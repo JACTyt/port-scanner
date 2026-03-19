@@ -330,6 +330,40 @@ public class ScanCommand implements Callable<Integer> {
                     + "Discovered subdomains are displayed and stored in the report. Example: --ct-recon example.com")
     private String ctRecon;
 
+    // ── P3: Unauthenticated service detection ────────────────────────────────
+    @Option(names = "--unauth-detect",
+            description = "Probe open ports for unauthenticated service access "
+                    + "(Redis, Memcached, Elasticsearch, FTP anon, Prometheus, Spring Actuator).")
+    private boolean unauthDetect;
+
+    // ── P3: DNS security audit ───────────────────────────────────────────────
+    @Option(names = "--dns-audit",
+            description = "Run DNS security audit on the target: AXFR zone transfer, open resolver, DNSSEC, TCP-53. "
+                    + "Optionally supply a domain with --dns-domain.")
+    private boolean dnsAudit;
+
+    @Option(names = "--dns-domain",
+            description = "Domain name to use for DNS audit zone-transfer and DNSSEC checks. "
+                    + "If omitted, only open-resolver and TCP-53 tests run.")
+    private String dnsDomain;
+
+    // ── P3: Two-phase scan pipeline ──────────────────────────────────────────
+    @Option(names = "--quick",
+            description = "Phase-1 fast scan: 1000 threads, 100 ms timeout, no banner/enrichment. "
+                    + "Combine with --deep to automatically run full enrichment on discovered open ports.")
+    private boolean quickScan;
+
+    @Option(names = "--deep",
+            description = "Phase-2 deep enrichment on open ports (banner, TLS, CVE, unauth-detect, etc.). "
+                    + "When combined with --quick, runs after the fast phase automatically.")
+    private boolean deepScan;
+
+    // ── P3: CVSS failure threshold ───────────────────────────────────────────
+    @Option(names = "--fail-on-cvss",
+            description = "Exit with code 2 if any CVE with a CVSS score >= this threshold is found. "
+                    + "Requires --cve. Example: --fail-on-cvss 7.0")
+    private Double failOnCvss;
+
     @Override
     public Integer call() throws Exception {
         // ── Verbose / color setup ───────────────────────────────────────────
@@ -877,7 +911,7 @@ public class ScanCommand implements Callable<Integer> {
                         try {
                             String keyword = cveLookup.extractKeyword(result.getServiceName(), result.getVersion() != null ? result.getVersion() : result.getBanner());
                             if (!keyword.isBlank()) {
-                                List<String> cves = cveLookup.lookup(keyword);
+                                List<com.portscanner.model.CveEntry> cves = cveLookup.lookup(keyword);
                                 if (!cves.isEmpty()) result.setCves(cves);
                             }
                         } finally {
@@ -889,6 +923,21 @@ public class ScanCommand implements Callable<Integer> {
                 }))
                 .toList();
             CompletableFuture.allOf(cveFutures.toArray(new CompletableFuture[0])).join();
+
+            // ── --fail-on-cvss exit code check ─────────────────────────────────
+            if (failOnCvss != null) {
+                boolean exceeded = report.getOpenPorts().stream()
+                    .filter(r -> r.getCves() != null)
+                    .flatMap(r -> r.getCves().stream())
+                    .anyMatch(c -> {
+                        Double score = c.getCvssV3() != null ? c.getCvssV3() : c.getCvssV2();
+                        return score != null && score >= failOnCvss;
+                    });
+                if (exceeded) {
+                    System.err.println("POLICY VIOLATION: CVE with CVSS score >= " + failOnCvss + " found.");
+                    return 2;
+                }
+            }
         }
 
         // ── Plugin/Script execution ──────────────────────────────────────────
@@ -1409,7 +1458,8 @@ public class ScanCommand implements Callable<Integer> {
                         r.getBanner() != null ? r.getBanner() : "-",
                         hostname)));
                 if (r.getCves() != null && !r.getCves().isEmpty()) {
-                    System.out.println(color("         @|red CVEs: " + String.join(", ", r.getCves()) + "|@"));
+                    String cveStr = r.getCves().stream().map(c -> c.getId()).collect(Collectors.joining(", "));
+                    System.out.println(color("         @|red CVEs: " + cveStr + "|@"));
                 }
                 if (r.getTlsInfo() != null) {
                     var tls = r.getTlsInfo();

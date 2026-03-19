@@ -102,7 +102,8 @@ public class HtmlExporter implements ReportExporter {
                     StringBuilder details = new StringBuilder();
                     details.append(esc(r.getBanner() != null ? r.getBanner() : "-"));
                     if (r.getCves() != null && !r.getCves().isEmpty()) {
-                        details.append("<br><span class=\"cve\">CVEs: ").append(esc(String.join(", ", r.getCves()))).append("</span>");
+                        String cveStr = r.getCves().stream().map(c -> c.getId()).collect(java.util.stream.Collectors.joining(", "));
+                        details.append("<br><span class=\"cve\">CVEs: ").append(esc(cveStr)).append("</span>");
                     }
                     if (r.getHostname() != null) {
                         details.append("<br><span class=\"tls\">rDNS: ").append(esc(r.getHostname())).append("</span>");

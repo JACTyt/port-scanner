@@ -21,7 +21,7 @@ public class ScanResult {
     /** Version string extracted from the banner by {@code VersionExtractor}. */
     private String version;
     private long responseTimeMs;
-    private List<String> cves;
+    private List<CveEntry> cves;
     private String hostname;
     private TlsInfo tlsInfo;
     private TlsAuditResult tlsAuditResult;
@@ -29,4 +29,6 @@ public class ScanResult {
     private HttpInfo httpInfo;
     private HttpSecurityAuditResult httpSecurityAuditResult;
     private SnmpInfo snmpInfo;
+    private UnauthResult unauthResult;
+    private DnsAuditResult dnsAuditResult;
 }

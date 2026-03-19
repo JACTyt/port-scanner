@@ -139,8 +139,9 @@ public class PdfExporter implements ReportExporter {
 
                 // CVE row
                 if (r.getCves() != null && !r.getCves().isEmpty()) {
+                    String cveStr = r.getCves().stream().map(c -> c.getId()).collect(java.util.stream.Collectors.joining(", "));
                     PdfPCell cveCell = new PdfPCell(new Phrase(
-                            "CVEs: " + String.join(", ", r.getCves()), WARN_FONT));
+                            "CVEs: " + cveStr, WARN_FONT));
                     cveCell.setColspan(4);
                     cveCell.setPadding(4);
                     cveCell.setBackgroundColor(new Color(255, 245, 245));

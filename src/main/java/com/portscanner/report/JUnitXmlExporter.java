@@ -84,7 +84,8 @@ public class JUnitXmlExporter implements ReportExporter {
         if (r.getBanner() != null) sb.append("Banner: ").append(r.getBanner()).append("\n");
         if (r.getVersion() != null) sb.append("Version: ").append(r.getVersion()).append("\n");
         if (r.getCves() != null && !r.getCves().isEmpty()) {
-            sb.append("CVEs: ").append(String.join(", ", r.getCves())).append("\n");
+            String cveStr = r.getCves().stream().map(c -> c.getId()).collect(java.util.stream.Collectors.joining(", "));
+            sb.append("CVEs: ").append(cveStr).append("\n");
         }
         return sb.toString().trim();
     }

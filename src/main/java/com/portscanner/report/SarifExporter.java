@@ -60,7 +60,7 @@ public class SarifExporter implements ReportExporter {
         // ── Rules (base + one per unique CVE) ──────────────────────────────
         Set<String> cveIds = new LinkedHashSet<>();
         for (ScanResult r : open) {
-            if (r.getCves() != null) cveIds.addAll(r.getCves());
+            if (r.getCves() != null) r.getCves().forEach(c -> cveIds.add(c.getId()));
         }
 
         ArrayNode rules = driver.putArray("rules");
@@ -107,7 +107,8 @@ public class SarifExporter implements ReportExporter {
 
             // One error per CVE on this port
             if (r.getCves() != null) {
-                for (String cveId : r.getCves()) {
+                for (var cve : r.getCves()) {
+                    String cveId = cve.getId();
                     ObjectNode cveResult = results.addObject();
                     cveResult.put("ruleId", cveId);
                     cveResult.put("level", "error");
@@ -117,8 +118,10 @@ public class SarifExporter implements ReportExporter {
                     cveResult.putArray("locations").addObject()
                             .putObject("physicalLocation")
                             .putObject("artifactLocation").put("uri", uri);
-                    cveResult.putObject("properties")
-                            .put("nvdUrl", "https://nvd.nist.gov/vuln/detail/" + cveId);
+                    ObjectNode cveProps = cveResult.putObject("properties");
+                    cveProps.put("nvdUrl", "https://nvd.nist.gov/vuln/detail/" + cveId);
+                    if (cve.getCvssV3() != null) cveProps.put("cvssV3", cve.getCvssV3());
+                    if (cve.getSeverity() != null) cveProps.put("severity", cve.getSeverity());
                 }
             }
         }

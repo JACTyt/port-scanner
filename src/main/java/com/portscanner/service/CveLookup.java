@@ -2,6 +2,7 @@ package com.portscanner.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.portscanner.model.CveEntry;
 
 import java.net.URI;
 import java.net.URLEncoder;
@@ -17,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Queries the NIST NVD REST API v2 for CVEs matching a service+version keyword.
+ * Returns enriched {@link CveEntry} objects with CVSS v3/v2 scores and descriptions.
  * Results are cached in-memory per session.
  * NVD rate limit: ~5 requests/30s without API key — enforced with delay.
  */
@@ -28,7 +30,7 @@ public class CveLookup {
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
-    private final Map<String, List<String>> cache = new ConcurrentHashMap<>();
+    private final Map<String, List<CveEntry>> cache = new ConcurrentHashMap<>();
     private long lastRequestTime = 0;
 
     public CveLookup() {
@@ -51,20 +53,23 @@ public class CveLookup {
     }
 
     /**
-     * Looks up CVEs for the given keyword. Returns up to MAX_RESULTS CVE IDs.
+     * Looks up CVEs for the given keyword. Returns up to MAX_RESULTS enriched {@link CveEntry} objects.
      * Checks local SQLite database first; falls back to live NVD API if no local results.
      */
-    public List<String> lookup(String keyword) {
+    public List<CveEntry> lookup(String keyword) {
         if (keyword == null || keyword.isBlank()) return List.of();
         if (cache.containsKey(keyword)) return cache.get(keyword);
 
         // Try local database first
         LocalCveDatabase localDb = new LocalCveDatabase();
         if (localDb.isDatabasePresent()) {
-            List<String> localResults = localDb.query(keyword);
-            if (!localResults.isEmpty()) {
-                cache.put(keyword, localResults);
-                return localResults;
+            List<String> localIds = localDb.query(keyword);
+            if (!localIds.isEmpty()) {
+                List<CveEntry> entries = localIds.stream()
+                        .map(id -> CveEntry.builder().id(id).build())
+                        .toList();
+                cache.put(keyword, entries);
+                return entries;
             }
         }
 
@@ -91,14 +96,68 @@ public class CveLookup {
 
             JsonNode root = objectMapper.readTree(response.body());
             JsonNode vulnerabilities = root.path("vulnerabilities");
-            List<String> cveIds = new ArrayList<>();
+            List<CveEntry> entries = new ArrayList<>();
             for (JsonNode vuln : vulnerabilities) {
-                String cveId = vuln.path("cve").path("id").asText(null);
-                if (cveId != null) cveIds.add(cveId);
+                JsonNode cveNode = vuln.path("cve");
+                String cveId = cveNode.path("id").asText(null);
+                if (cveId == null) continue;
+
+                CveEntry.CveEntryBuilder builder = CveEntry.builder().id(cveId);
+
+                // Parse CVSS v3.1
+                JsonNode metricsV31 = cveNode.path("metrics").path("cvssMetricV31");
+                if (metricsV31.isArray() && metricsV31.size() > 0) {
+                    JsonNode cvssData = metricsV31.get(0).path("cvssData");
+                    double score = cvssData.path("baseScore").asDouble(0);
+                    if (score > 0) {
+                        builder.cvssV3(score);
+                        builder.cvssVector(cvssData.path("vectorString").asText(null));
+                        String sev = cvssData.path("baseSeverity").asText(null);
+                        builder.severity(sev != null ? sev : CveEntry.deriveSeverity(score));
+                    }
+                }
+
+                // Parse CVSS v3.0 as fallback
+                if (!metricsV31.isArray() || metricsV31.size() == 0) {
+                    JsonNode metricsV30 = cveNode.path("metrics").path("cvssMetricV30");
+                    if (metricsV30.isArray() && metricsV30.size() > 0) {
+                        JsonNode cvssData = metricsV30.get(0).path("cvssData");
+                        double score = cvssData.path("baseScore").asDouble(0);
+                        if (score > 0) {
+                            builder.cvssV3(score);
+                            builder.cvssVector(cvssData.path("vectorString").asText(null));
+                            String sev = cvssData.path("baseSeverity").asText(null);
+                            builder.severity(sev != null ? sev : CveEntry.deriveSeverity(score));
+                        }
+                    }
+                }
+
+                // Parse CVSS v2
+                JsonNode metricsV2 = cveNode.path("metrics").path("cvssMetricV2");
+                if (metricsV2.isArray() && metricsV2.size() > 0) {
+                    double score = metricsV2.get(0).path("cvssData").path("baseScore").asDouble(0);
+                    if (score > 0) builder.cvssV2(score);
+                }
+
+                // Parse description
+                JsonNode descs = cveNode.path("descriptions");
+                if (descs.isArray()) {
+                    for (JsonNode desc : descs) {
+                        if ("en".equals(desc.path("lang").asText())) {
+                            String text = desc.path("value").asText(null);
+                            if (text != null) {
+                                builder.description(text.length() > 120 ? text.substring(0, 120) : text);
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                entries.add(builder.build());
             }
 
-            cache.put(keyword, cveIds);
-            return cveIds;
+            cache.put(keyword, entries);
+            return entries;
 
         } catch (Exception e) {
             System.err.println("Warning: CVE lookup failed for '" + keyword + "': " + e.getMessage());

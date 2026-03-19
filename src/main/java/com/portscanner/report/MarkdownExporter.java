@@ -111,7 +111,7 @@ public class MarkdownExporter implements ReportExporter {
                 // CVEs sub-row
                 if (r.getCves() != null && !r.getCves().isEmpty()) {
                     sb.append("| | | | ⚠️ CVEs: `")
-                      .append(String.join("`, `", r.getCves())).append("` |\n");
+                      .append(r.getCves().stream().map(c -> c.getId()).collect(java.util.stream.Collectors.joining("`, `"))).append("` |\n");
                 }
             }
             sb.append("\n");
