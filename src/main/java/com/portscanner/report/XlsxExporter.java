@@ -77,7 +77,7 @@ public class XlsxExporter implements ReportExporter {
                 maxCvss = res.getCves().stream()
                         .mapToDouble(c -> c.getCvssV3() != null ? c.getCvssV3() : 0)
                         .max().orElse(0);
-                if (maxCvss >= 9.0) row.setRowStyle(criticalStyle);
+                if (maxCvss >= 9.0) applyCellStyleToRow(row, criticalStyle);
             }
             row.createCell(6).setCellValue(maxCvss);
         }
@@ -104,8 +104,8 @@ public class XlsxExporter implements ReportExporter {
                 row.createCell(3).setCellValue(nvl(cve.getSeverity()));
                 row.createCell(4).setCellValue(nvl(cve.getDescription()));
                 if (cve.getCvssV3() != null) {
-                    if (cve.getCvssV3() >= 9.0) row.setRowStyle(criticalStyle);
-                    else if (cve.getCvssV3() >= 7.0) row.setRowStyle(highStyle);
+                    if (cve.getCvssV3() >= 9.0) applyCellStyleToRow(row, criticalStyle);
+                    else if (cve.getCvssV3() >= 7.0) applyCellStyleToRow(row, highStyle);
                 }
             }
         }
@@ -217,6 +217,12 @@ public class XlsxExporter implements ReportExporter {
         style.setFillForegroundColor(IndexedColors.ORANGE.getIndex());
         style.setFillPattern(FillPatternType.SOLID_FOREGROUND);
         return style;
+    }
+
+    private void applyCellStyleToRow(Row row, CellStyle style) {
+        for (Cell cell : row) {
+            cell.setCellStyle(style);
+        }
     }
 
     private String nvl(String s) { return s != null ? s : ""; }

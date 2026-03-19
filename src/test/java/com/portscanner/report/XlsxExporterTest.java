@@ -113,6 +113,25 @@ class XlsxExporterTest {
     }
 
     @Test
+    void cves_sheet_criticalRowHasRedFill() throws Exception {
+        Path out = tmp.resolve("report.xlsx");
+        new XlsxExporter().export(buildReport(), out);
+
+        try (FileInputStream fis = new FileInputStream(out.toFile());
+             Workbook wb = new XSSFWorkbook(fis)) {
+            Sheet cves = wb.getSheet("CVEs");
+            Row row = cves.getRow(1); // first CVE row (CVSS 9.8 = CRITICAL)
+            assertNotNull(row);
+            // Verify the cell has a fill style (non-default)
+            Cell cell = row.getCell(0);
+            assertNotNull(cell.getCellStyle());
+            short fillIndex = cell.getCellStyle().getFillForegroundColor();
+            // IndexedColors.RED.getIndex() = 10
+            assertEquals(10, fillIndex, "CRITICAL CVE row should have red fill");
+        }
+    }
+
+    @Test
     void traceroute_sheet_hasHops() throws Exception {
         Path out = tmp.resolve("report.xlsx");
         new XlsxExporter().export(buildReport(), out);
