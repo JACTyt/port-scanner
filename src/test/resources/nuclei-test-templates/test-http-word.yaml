@@ -1,0 +1,14 @@
+id: test-word-match
+info:
+  name: Test Word Matcher
+  severity: medium
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: word
+        words:
+          - "Welcome"
+          - "Index"
+        condition: or

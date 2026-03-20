@@ -1,0 +1,12 @@
+id: test-regex-match
+info:
+  name: Test Regex Matcher
+  severity: high
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: regex
+        regex:
+          - "Apache"

@@ -1,0 +1,13 @@
+id: test-status-match
+info:
+  name: Test Status Matcher
+  severity: info
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 301
