@@ -31,4 +31,5 @@ public class ScanResult {
     private SnmpInfo snmpInfo;
     private UnauthResult unauthResult;
     private DnsAuditResult dnsAuditResult;
+    private List<NucleiResult> nucleiFindings;
 }
