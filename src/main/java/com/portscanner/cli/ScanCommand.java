@@ -52,6 +52,10 @@ import com.portscanner.scanner.SnmpScanner;
 import com.portscanner.scanner.SshAuditor;
 import com.portscanner.scanner.TlsAuditor;
 import com.portscanner.scanner.TlsInspector;
+import com.portscanner.nuclei.NucleiRunner;
+import com.portscanner.nuclei.NucleiTemplate;
+import com.portscanner.nuclei.NucleiTemplateLoader;
+import com.portscanner.model.NucleiResult;
 import com.portscanner.service.CertTransparencyClient;
 import com.portscanner.service.ShodanInternetDbClient;
 import com.portscanner.scanner.TopPorts;
@@ -74,6 +78,7 @@ import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -346,6 +351,18 @@ public class ScanCommand implements Callable<Integer> {
             description = "Domain name to use for DNS audit zone-transfer and DNSSEC checks. "
                     + "If omitted, only open-resolver and TCP-53 tests run.")
     private String dnsDomain;
+
+    // ── P4: Nuclei template loader ────────────────────────────────────────────
+    @Option(names = "--nuclei-templates",
+            description = "Path to a directory of Nuclei YAML templates. "
+                    + "Runs matched templates against all open HTTP/HTTPS ports.")
+    private String nucleiTemplatesPath;
+
+    @Option(names = "--nuclei-tags",
+            description = "Comma-separated severity tags to filter loaded templates, "
+                    + "e.g. 'critical,high'. Default: run all templates.",
+            split = ",")
+    private List<String> nucleiTags;
 
     // ── P3: Two-phase scan pipeline ──────────────────────────────────────────
     @Option(names = "--quick",
@@ -1114,6 +1131,40 @@ public class ScanCommand implements Callable<Integer> {
                 if (!onlyInOurs.isEmpty())
                     System.out.println(color("@|green In this scan but not in Shodan:|@ " +
                             onlyInOurs.stream().map(String::valueOf).collect(Collectors.joining(", "))));
+            }
+        }
+
+        // ── Nuclei template execution ──────────────────────────────────────────
+        if (nucleiTemplatesPath != null) {
+            Path nucleiDir = Path.of(nucleiTemplatesPath);
+            if (Files.isDirectory(nucleiDir)) {
+                try {
+                    NucleiTemplateLoader loader = new NucleiTemplateLoader();
+                    List<NucleiTemplate> templates = loader.load(nucleiDir, nucleiTags);
+                    if (!templates.isEmpty()) {
+                        System.out.println(color(String.format(
+                                "@|cyan Nuclei:|@ running %d template(s) against open ports...", templates.size())));
+                        NucleiRunner runner = new NucleiRunner();
+                        List<ScanResult> openPorts = report.getOpenPorts();
+                        if (openPorts != null) {
+                            for (ScanResult r : openPorts) {
+                                List<NucleiResult> findings = runner.run(
+                                        report.getResolvedIp() != null ? report.getResolvedIp() : host, r, templates);
+                                if (!findings.isEmpty()) {
+                                    r.setNucleiFindings(findings);
+                                    findings.forEach(f -> System.out.println(color(String.format(
+                                            "  @|red [%s]|@ %s matched at %s",
+                                            f.getSeverity(), f.getTemplateId(), f.getMatchedAt()))));
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("Warning: Nuclei execution failed — " + e.getMessage());
+                    log.debug("Nuclei error", e);
+                }
+            } else {
+                System.err.println("Warning: --nuclei-templates path is not a directory: " + nucleiTemplatesPath);
             }
         }
 

@@ -113,6 +113,13 @@ public class MarkdownExporter implements ReportExporter {
                     sb.append("| | | | ⚠️ CVEs: `")
                       .append(r.getCves().stream().map(c -> c.getId()).collect(java.util.stream.Collectors.joining("`, `"))).append("` |\n");
                 }
+                // Nuclei findings sub-row
+                if (r.getNucleiFindings() != null && !r.getNucleiFindings().isEmpty()) {
+                    sb.append("| | | | 🔍 Nuclei: ");
+                    r.getNucleiFindings().forEach(f ->
+                        sb.append("`").append(f.getTemplateId()).append("` [").append(f.getSeverity()).append("] "));
+                    sb.append("|\n");
+                }
             }
             sb.append("\n");
         }

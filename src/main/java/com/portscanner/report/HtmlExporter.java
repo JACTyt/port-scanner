@@ -43,6 +43,8 @@ public class HtmlExporter implements ReportExporter {
             w.println(".badge-open{background:#00ff8822;color:#00ff88;padding:2px 8px;border-radius:4px;font-weight:bold}");
             w.println(".badge-filtered{background:#ffaa0022;color:#ffaa00;padding:2px 8px;border-radius:4px}");
             w.println(".cve{color:#ff6b6b;font-size:11px}");
+            w.println(".nuclei{color:#cc88ff;font-size:11px;margin-top:4px}");
+            w.println(".badge-nuclei{background:#44004422;color:#cc88ff;padding:2px 6px;border-radius:4px;font-size:10px}");
             w.println(".tls{color:#88ccff;font-size:11px;margin-top:4px}");
             w.println(".http{color:#aaffaa;font-size:11px;margin-top:4px}");
             w.println(".warn{color:#ff9944;font-size:11px}");
@@ -104,6 +106,15 @@ public class HtmlExporter implements ReportExporter {
                     if (r.getCves() != null && !r.getCves().isEmpty()) {
                         String cveStr = r.getCves().stream().map(c -> c.getId()).collect(java.util.stream.Collectors.joining(", "));
                         details.append("<br><span class=\"cve\">CVEs: ").append(esc(cveStr)).append("</span>");
+                    }
+                    if (r.getNucleiFindings() != null && !r.getNucleiFindings().isEmpty()) {
+                        details.append("<br><div class='nuclei'><b>Nuclei:</b>");
+                        for (var f : r.getNucleiFindings()) {
+                            details.append(" <span class='badge-nuclei'>")
+                                   .append(esc(f.getTemplateId()))
+                                   .append(" [").append(esc(f.getSeverity())).append("]</span>");
+                        }
+                        details.append("</div>");
                     }
                     if (r.getHostname() != null) {
                         details.append("<br><span class=\"tls\">rDNS: ").append(esc(r.getHostname())).append("</span>");
