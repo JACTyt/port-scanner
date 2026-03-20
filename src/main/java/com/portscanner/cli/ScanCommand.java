@@ -28,6 +28,8 @@ import com.portscanner.report.DiffReport;
 import com.portscanner.report.ExporterFactory;
 import com.portscanner.report.ReportDiffer;
 import com.portscanner.report.ReportExporter;
+import com.portscanner.api.CoordinatorServer;
+import com.portscanner.api.ScanAgentClient;
 import com.portscanner.api.ScanApiServer;
 import com.portscanner.model.OsGuess;
 import com.portscanner.report.TopologyExporter;
@@ -264,6 +266,32 @@ public class ScanCommand implements Callable<Integer> {
             description = "Require X-API-Key header on all API requests (set to your chosen key)")
     private String serveAuth;
 
+    // ── P4: Distributed mode ──────────────────────────────────────────────────
+    @Option(names = "--coordinator",
+            description = "Start as coordinator node. Agents connect and receive work.")
+    private boolean coordinatorMode;
+
+    @Option(names = "--coordinator-port",
+            description = "HTTP port for the coordinator server. Default: 9000.",
+            defaultValue = "9000")
+    private int coordinatorPort;
+
+    @Option(names = "--agent",
+            description = "Start as a scan agent. Polls coordinator for work items.")
+    private boolean agentMode;
+
+    @Option(names = "--agent-server",
+            description = "Coordinator URL for agent mode, e.g. http://coordinator:9000")
+    private String agentServer;
+
+    @Option(names = "--agent-token",
+            description = "Authentication token for agent ↔ coordinator communication.")
+    private String agentToken;
+
+    @Option(names = "--agent-label",
+            description = "Human-readable label for this agent, e.g. 'dmz-segment'.")
+    private String agentLabel;
+
     // ── Watch / scheduled mode ─────────────────────────────────────────────────
     @Option(names = "--watch",
             description = "Re-scan the target repeatedly, printing only diffs. Runs until Ctrl+C.")
@@ -452,6 +480,40 @@ public class ScanCommand implements Callable<Integer> {
                 System.err.println("Error: --proxy port is not a valid integer");
                 return 2;
             }
+        }
+
+        // ── Coordinator mode ──────────────────────────────────────────────────
+        if (coordinatorMode) {
+            try {
+                CoordinatorServer coord = new CoordinatorServer(coordinatorPort, agentToken);
+                coord.start();
+                System.out.println("Coordinator running on port " + coordinatorPort + ". Press Ctrl+C to stop.");
+                Runtime.getRuntime().addShutdownHook(new Thread(coord::stop));
+                Thread.currentThread().join();
+            } catch (Exception e) {
+                System.err.println("Error starting coordinator: " + e.getMessage());
+                return 1;
+            }
+            return 0;
+        }
+
+        // ── Agent mode ────────────────────────────────────────────────────────
+        if (agentMode) {
+            if (agentServer == null) {
+                System.err.println("--agent-server is required in agent mode.");
+                return 1;
+            }
+            try {
+                ScanAgentClient agentClient = new ScanAgentClient(agentServer, agentToken, agentLabel);
+                agentClient.start();
+                System.out.println("Agent " + agentClient.getAgentId() + " running. Press Ctrl+C to stop.");
+                Runtime.getRuntime().addShutdownHook(new Thread(agentClient::stop));
+                Thread.currentThread().join();
+            } catch (Exception e) {
+                System.err.println("Error starting agent: " + e.getMessage());
+                return 1;
+            }
+            return 0;
         }
 
         // ── REST API server mode ─────────────────────────────────────────────
