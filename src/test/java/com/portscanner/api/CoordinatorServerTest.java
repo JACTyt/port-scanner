@@ -54,7 +54,7 @@ class CoordinatorServerTest {
     @Test
     void agentCanRegister() throws Exception {
         AgentRegistration reg = AgentRegistration.builder()
-                .agentId("agent-1").label("dmz").token("test-token").build();
+                .agentId("agent-1").label("dmz").build();
         HttpResponse<String> resp = post("/agent/register", reg);
         assertEquals(200, resp.statusCode());
         assertTrue(resp.body().contains("registered"));

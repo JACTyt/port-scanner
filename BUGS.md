@@ -94,6 +94,7 @@ $env:GREYNOISE_KEY = "your_key_here"
 
 ### BUG-09: CoordinatorServer 204 response is malformed — agent poll loop may hang
 
+**Status:** ✅ Fixed
 **Severity:** Critical
 **File:** `src/main/java/com/portscanner/api/CoordinatorServer.java` — `handleWork()` / `send()` helper
 
@@ -112,6 +113,7 @@ Call this instead of `send(ex, 204, "")` in `handleWork`.
 
 ### BUG-10: Bearer token sent in request body during agent registration (credential leak)
 
+**Status:** ✅ Fixed
 **Severity:** Critical
 **File:** `src/main/java/com/portscanner/api/ScanAgentClient.java` — `register()` (line ~75)
 **File:** `src/main/java/com/portscanner/api/dto/AgentRegistration.java`

@@ -72,7 +72,7 @@ public class ScanAgentClient {
 
     private void register() throws Exception {
         AgentRegistration reg = AgentRegistration.builder()
-                .agentId(agentId).label(label).token(token).build();
+                .agentId(agentId).label(label).build();
         post("/agent/register", reg);
         log.info("Registered as agent {} ({})", agentId, label);
     }

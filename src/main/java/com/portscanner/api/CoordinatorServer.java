@@ -86,7 +86,7 @@ public class CoordinatorServer {
         if (!isAuthorized(ex)) { send(ex, 401, "Unauthorized"); return; }
         WorkItem item = workQueue.poll();
         if (item == null) {
-            send(ex, 204, "");
+            sendNoContent(ex);
         } else {
             send(ex, 200, mapper.writeValueAsString(item));
         }
@@ -137,6 +137,12 @@ public class CoordinatorServer {
         ex.getResponseHeaders().set("Content-Type", "application/json");
         ex.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = ex.getResponseBody()) { os.write(bytes); }
+    }
+
+    /** Send a 204 No Content response with no body, as required by RFC 7230. */
+    private void sendNoContent(HttpExchange ex) throws IOException {
+        ex.sendResponseHeaders(204, -1);
+        ex.getResponseBody().close();
     }
 
     /** Enqueue work programmatically (used by tests and ScanCommand). */

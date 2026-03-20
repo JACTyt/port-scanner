@@ -9,5 +9,5 @@ import lombok.NoArgsConstructor;
 public class AgentRegistration {
     private String agentId;
     private String label;
-    private String token;
+    // token is NOT included — authentication is done via the Authorization header only
 }
