@@ -3,6 +3,8 @@ package com.portscanner.nuclei;
 import com.portscanner.model.NucleiResult;
 import com.portscanner.model.PortStatus;
 import com.portscanner.model.ScanResult;
+import com.portscanner.nuclei.matcher.StatusMatcher;
+import com.portscanner.nuclei.matcher.WordMatcher;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -75,7 +77,6 @@ class NucleiRunnerTest {
         List<NucleiResult> findings = new NucleiRunner()
                 .run("localhost", result, List.of(regexTemplate("Apache")));
         assertEquals(1, findings.size());
-        assertTrue(findings.get(0).isMatched());
         assertEquals("high", findings.get(0).getSeverity());
     }
 
@@ -85,5 +86,95 @@ class NucleiRunnerTest {
         List<NucleiResult> findings = new NucleiRunner()
                 .run("localhost", result, List.of(regexTemplate("nginx")));
         assertTrue(findings.isEmpty());
+    }
+
+    // ── WordMatcher unit tests ────────────────────────────────────────────────
+
+    @Test
+    void wordMatcher_hit() {
+        WordMatcher wm = new WordMatcher();
+        NucleiTemplate.Matcher m = new NucleiTemplate.Matcher();
+        m.setWords(List.of("Apache"));
+        assertTrue(wm.matches(m, "<html>Apache/2.4</html>"));
+    }
+
+    @Test
+    void wordMatcher_miss() {
+        WordMatcher wm = new WordMatcher();
+        NucleiTemplate.Matcher m = new NucleiTemplate.Matcher();
+        m.setWords(List.of("nginx"));
+        assertFalse(wm.matches(m, "<html>Apache/2.4</html>"));
+    }
+
+    @Test
+    void wordMatcher_condition_and_all_present() {
+        WordMatcher wm = new WordMatcher();
+        NucleiTemplate.Matcher m = new NucleiTemplate.Matcher();
+        m.setWords(List.of("Apache", "2.4"));
+        m.setCondition("and");
+        assertTrue(wm.matches(m, "Apache/2.4"));
+    }
+
+    @Test
+    void wordMatcher_condition_and_one_missing() {
+        WordMatcher wm = new WordMatcher();
+        NucleiTemplate.Matcher m = new NucleiTemplate.Matcher();
+        m.setWords(List.of("Apache", "nginx"));
+        m.setCondition("and");
+        assertFalse(wm.matches(m, "Apache/2.4"));
+    }
+
+    @Test
+    void wordMatcher_negative_true_inverts_hit() {
+        WordMatcher wm = new WordMatcher();
+        NucleiTemplate.Matcher m = new NucleiTemplate.Matcher();
+        m.setWords(List.of("Apache"));
+        m.setNegative(true);
+        assertFalse(wm.matches(m, "<html>Apache/2.4</html>"));
+    }
+
+    @Test
+    void wordMatcher_negative_true_inverts_miss() {
+        WordMatcher wm = new WordMatcher();
+        NucleiTemplate.Matcher m = new NucleiTemplate.Matcher();
+        m.setWords(List.of("nginx"));
+        m.setNegative(true);
+        assertTrue(wm.matches(m, "<html>Apache/2.4</html>"));
+    }
+
+    // ── StatusMatcher unit tests ──────────────────────────────────────────────
+
+    @Test
+    void statusMatcher_code_in_list() {
+        StatusMatcher sm = new StatusMatcher();
+        NucleiTemplate.Matcher m = new NucleiTemplate.Matcher();
+        m.setStatus(List.of(200, 301));
+        assertTrue(sm.matches(m, 200));
+    }
+
+    @Test
+    void statusMatcher_code_not_in_list() {
+        StatusMatcher sm = new StatusMatcher();
+        NucleiTemplate.Matcher m = new NucleiTemplate.Matcher();
+        m.setStatus(List.of(200, 301));
+        assertFalse(sm.matches(m, 404));
+    }
+
+    @Test
+    void statusMatcher_negative_true_inverts_in_list() {
+        StatusMatcher sm = new StatusMatcher();
+        NucleiTemplate.Matcher m = new NucleiTemplate.Matcher();
+        m.setStatus(List.of(200));
+        m.setNegative(true);
+        assertFalse(sm.matches(m, 200));
+    }
+
+    @Test
+    void statusMatcher_negative_true_inverts_not_in_list() {
+        StatusMatcher sm = new StatusMatcher();
+        NucleiTemplate.Matcher m = new NucleiTemplate.Matcher();
+        m.setStatus(List.of(200));
+        m.setNegative(true);
+        assertTrue(sm.matches(m, 404));
     }
 }

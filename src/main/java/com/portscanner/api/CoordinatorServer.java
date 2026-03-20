@@ -115,7 +115,7 @@ public class CoordinatorServer {
         if (item.getWorkId() == null) item.setWorkId(UUID.randomUUID().toString());
         workQueue.offer(item);
         log.info("Work item queued: {} → {}", item.getWorkId(), item.getTarget());
-        send(ex, 200, "{\"workId\":\"" + item.getWorkId() + "\"}");
+        send(ex, 200, mapper.writeValueAsString(java.util.Map.of("workId", item.getWorkId())));
     }
 
     private void handleScans(HttpExchange ex) throws IOException {

@@ -17,7 +17,6 @@ public class NucleiResult {
     private String templateId;
     private String name;
     private String severity;   // info, low, medium, high, critical
-    private boolean matched;
     private String matchedAt;  // URL or address that matched
     private List<String> extractedValues;
 }

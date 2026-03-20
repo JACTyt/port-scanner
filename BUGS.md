@@ -231,6 +231,7 @@ if (!"GET".equals(ex.getRequestMethod())) { send(ex, 405, "Method Not Allowed");
 
 ### NOTE-01: `NucleiTemplateLoader` is non-recursive — will load 0 templates from real Nuclei repos
 
+**Status:** ✅ Fixed
 **Severity:** Minor
 **File:** `src/main/java/com/portscanner/nuclei/NucleiTemplateLoader.java` — line 30
 
@@ -242,6 +243,7 @@ if (!"GET".equals(ex.getRequestMethod())) { send(ex, 405, "Method Not Allowed");
 
 ### NOTE-02: `workId` JSON response uses string concatenation — potential JSON injection
 
+**Status:** ✅ Fixed
 **Severity:** Minor
 **File:** `src/main/java/com/portscanner/api/CoordinatorServer.java` — `handleSubmit()` line ~118
 
@@ -257,6 +259,7 @@ If a caller supplies a `workId` containing `"` or `\`, the response is malformed
 
 ### NOTE-03: `NucleiResult.matched` field is always `true` and carries no information
 
+**Status:** ✅ Fixed
 **Severity:** Minor
 **File:** `src/main/java/com/portscanner/model/NucleiResult.java` — `matched` field
 **File:** `src/main/java/com/portscanner/nuclei/NucleiRunner.java` — line ~86
@@ -269,6 +272,7 @@ If a caller supplies a `workId` containing `"` or `\`, the response is malformed
 
 ### NOTE-04: `WordMatcher` and `StatusMatcher` have no dedicated unit tests
 
+**Status:** ✅ Fixed
 **Severity:** Minor
 **File:** `src/test/java/com/portscanner/nuclei/NucleiRunnerTest.java`
 

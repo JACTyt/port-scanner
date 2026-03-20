@@ -83,7 +83,6 @@ public class NucleiRunner {
                         .templateId(template.getId())
                         .name(template.getInfo() != null ? template.getInfo().getName() : template.getId())
                         .severity(template.getInfo() != null ? template.getInfo().getSeverity() : "info")
-                        .matched(true)
                         .matchedAt(path)
                         .build();
             }
