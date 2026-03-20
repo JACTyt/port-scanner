@@ -10,12 +10,12 @@ A fast, multithreaded TCP/UDP port scanner written in Java 21. Built for network
 
 | Category | Feature |
 |----------|---------|
-| **Scanning** | TCP connect scan, UDP scan, SNMP probe (SNMPv2c), CIDR/subnet scan, multi-host file scan, auto-discover local subnets |
+| **Scanning** | TCP connect scan, UDP scan, SNMP probe (SNMPv2c), CIDR/subnet scan, multi-host file scan, auto-discover local subnets, distributed agent/coordinator mode |
 | **Performance** | Java 21 virtual threads, up to 1000 concurrent connections, nmap-style timing profiles (T0–T5) |
-| **Detection** | Service identification (220+ ports), banner grabbing, protocol-specific probes (HTTP, SSH, FTP, SMTP, MySQL, PostgreSQL, Redis, Memcached), service version extraction, OS/TTL fingerprinting |
-| **Enrichment** | TLS/SSL certificate inspection, HTTP header analysis, CVE lookup with CVSS v3/v2 scores (NVD API + local SQLite cache), unauthenticated service detection (Redis, FTP, Elasticsearch, Memcached, Prometheus, Actuator), IP geolocation, AbuseIPDB reputation, GreyNoise threat intel, ASN lookup |
+| **Detection** | Service identification (220+ ports), banner grabbing, protocol-specific probes (HTTP, SSH, FTP, SMTP, MySQL, PostgreSQL, Redis, Memcached), service version extraction, OS/TTL fingerprinting, TLS deep audit (cipher enumeration, weak-cipher detection), SSH algorithm audit, HTTP security header scoring (OWASP model) |
+| **Enrichment** | TLS/SSL certificate inspection, HTTP header analysis, CVE lookup with CVSS v3/v2 scores (NVD API + local SQLite cache), unauthenticated service detection (Redis, FTP, Elasticsearch, Memcached, Prometheus, Actuator), IP geolocation, AbuseIPDB reputation, GreyNoise threat intel, ASN lookup, Shodan InternetDB enrichment, Nuclei YAML template execution (regex/word/status matchers), Certificate Transparency recon |
 | **Network** | IPv6 support, SOCKS5 proxy routing, traceroute, DNS subdomain brute-force, DNS security audit (AXFR, open resolver, DNSSEC), host discovery (ping sweep) |
-| **Output** | JSON, CSV, TXT, HTML, XML, Nmap-XML, Markdown, PDF, Metasploit `.rc` resource scripts, Graphviz/Mermaid topology diagrams, scan diff mode |
+| **Output** | JSON, CSV, TXT, HTML, XML, Nmap-XML, Markdown, PDF, Metasploit `.rc` resource scripts, Graphviz/Mermaid topology diagrams, scan diff mode, XLSX (Apache POI, 6 sheets with conditional formatting), SARIF 2.1.0 (GitHub Security tab), JUnit XML (CI policy gates) |
 | **Automation** | REST API server, watch/scheduled mode, webhook notifications (Slack/Discord/custom), scan history database |
 | **Usability** | Interactive REPL shell, full-screen TUI, YAML config file, scan profiles, top-ports list (nmap frequency order), external plugin system |
 
@@ -178,6 +178,12 @@ java -jar $JAR shell
 | `--snmp` | Probe UDP port 161 for SNMP after the TCP scan (retrieves sysDescr, sysName, sysLocation, sysContact, ifNumber) |
 | `--snmp-community <list>` | `public,private` | Comma-separated SNMPv2c community strings to try in order |
 | `--unauth-detect` | Probe open ports for unauthenticated service access (Redis, Memcached, Elasticsearch, FTP anonymous, Prometheus, Spring Actuator) |
+| `--tls-deep` | | TLS deep audit: cipher suite enumeration, weak-cipher detection, BEAST/POODLE/HEARTBLEED probes |
+| `--ssh-audit` | | SSH algorithm audit: parse Key Exchange Init to identify weak/deprecated algorithms |
+| `--http-security` | | HTTP security header scoring using OWASP Observatory model (produces A–F grade) |
+| `--ct-recon <domain>` | | Certificate Transparency recon: query crt.sh for subdomains of the given domain |
+| `--nuclei-templates <path>` | | Path to a directory of Nuclei YAML templates. Runs matched templates against all open HTTP/HTTPS ports. |
+| `--nuclei-tags <tags>` | | Comma-separated severity tags to filter Nuclei templates, e.g. `critical,high`. Default: run all. |
 
 ### Enrichment
 
@@ -186,6 +192,9 @@ java -jar $JAR shell
 | `--geolocate` | Geolocate the target IP via IPinfo.io (`IPINFO_TOKEN` optional) |
 | `--abuse-check` | Check IP reputation via AbuseIPDB (requires `ABUSEIPDB_KEY`) |
 | `--greynoise` | Check IP via GreyNoise Community API (requires `GREYNOISE_KEY`) |
+| `--shodan` | | Query Shodan InternetDB for the target IP (free, no API key required). Shows known open ports, CVEs, and tags; computes delta vs this scan. |
+| `--fail-on-open <port[,port…]>` | | Exit with code 1 if any of the specified ports are found open. Useful in CI pipelines. |
+| `--policy-file <path>` | | YAML policy file with rules evaluated post-scan (FAIL/WARN/INFO actions per port/CVE). Overrides `--fail-on-open`. |
 | `--fail-on-cvss <score>` | Exit with code 2 if any CVE with CVSS score ≥ threshold is found. Requires `--cve`. Example: `--fail-on-cvss 7.0` |
 
 ### Network
@@ -235,6 +244,29 @@ java -jar $JAR shell
 | `--serve` | false | Start an embedded REST API server instead of running a one-off scan |
 | `--serve-port <port>` | `8080` | Port for the REST API server |
 | `--serve-auth <key>` | — | Require `X-API-Key: <key>` header on all API requests |
+
+### Distributed Mode
+
+Run as a coordinator that distributes scan work across multiple agent nodes:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--coordinator` | false | Start as a coordinator node. Agents register and poll for work. |
+| `--coordinator-port <port>` | `9000` | HTTP port for the coordinator server |
+| `--agent` | false | Start as a scan agent. Polls the coordinator for work items, executes scans, reports results. |
+| `--agent-server <url>` | — | Coordinator URL for agent mode, e.g. `http://coordinator:9000` |
+| `--agent-token <token>` | — | Shared authentication token for agent ↔ coordinator communication |
+| `--agent-label <label>` | — | Human-readable label for this agent, e.g. `dmz-segment` |
+
+**Coordinator node:**
+```bash
+java -jar port-scanner-1.0-shaded.jar --coordinator --coordinator-port 9000 --agent-token secret
+```
+
+**Agent node (on a different machine):**
+```bash
+java -jar port-scanner-1.0-shaded.jar --agent --agent-server http://coordinator:9000 --agent-token secret --agent-label dmz
+```
 
 ### Webhooks
 
@@ -294,6 +326,9 @@ Format is selected by file extension, or overridden with `--format`.
 | `.rc` | `msf` / `metasploit` | Metasploit Framework resource script — see [Metasploit Integration](#metasploit-integration) |
 | `.dot` | — | Graphviz DOT network topology diagram (`--topology-output`) |
 | `.mmd` / `.mermaid` | — | Mermaid network topology diagram (`--topology-output`) |
+| `.xlsx` | `xlsx` | Excel spreadsheet — 6 sheets: Summary, Open Ports, CVEs, TLS Findings, SNMP, Traceroute. Conditional formatting highlights CRITICAL (red) and HIGH (orange) CVEs. |
+| `.sarif` | `sarif` | SARIF 2.1.0 — upload to GitHub Security tab, DefectDojo, or any OASIS-compliant platform. Each open port becomes a result; each CVE becomes a rule. |
+| — | `junit-xml` | JUnit XML — model open ports as test cases, policy violations as failures. Accepted by Jenkins, GitLab CI, Azure DevOps, CircleCI. |
 
 ```bash
 # Save as HTML
@@ -700,10 +735,20 @@ com.portscanner/
 │   ├── TopologyExporter             Graphviz DOT / Mermaid diagrams
 │   ├── ReportDiffer.java            Scan diff engine
 │   └── ExporterFactory.java         Extension/format → exporter dispatch
+├── nuclei/
+│   ├── NucleiTemplate.java          Parsed Nuclei YAML template model
+│   ├── NucleiTemplateLoader.java    Loads and filters templates from a directory
+│   ├── NucleiRunner.java            Executes templates against open HTTP/HTTPS ports
+│   └── matcher/
+│       ├── RegexMatcher.java        Regex body/header matching
+│       ├── WordMatcher.java         Word/substring matching
+│       └── StatusMatcher.java       HTTP status code matching
 ├── api/
 │   ├── ScanApiServer.java           JDK HttpServer REST API
 │   ├── ScanJobManager.java          Virtual-thread job executor
-│   └── dto/ScanRequest, ScanResponse
+│   ├── CoordinatorServer.java       Distributed coordinator HTTP server
+│   ├── ScanAgentClient.java         Agent polling and result reporting client
+│   └── dto/ScanRequest, ScanResponse, AgentRegistration, WorkItem, AgentResult
 ├── config/
 │   ├── ScannerConfig.java           Config model (~/.portscanner/config.yaml)
 │   ├── ConfigLoader.java            YAML loader
