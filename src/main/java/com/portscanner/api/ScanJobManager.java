@@ -105,20 +105,6 @@ public class ScanJobManager {
     }
 
     private static int[] parsePorts(String portRange) {
-        if (!portRange.contains(",") && portRange.contains("-")) {
-            String[] p = portRange.split("-", 2);
-            int start = Integer.parseInt(p[0].trim());
-            int end   = Integer.parseInt(p[1].trim());
-            int[] arr = new int[end - start + 1];
-            for (int i = 0; i < arr.length; i++) arr[i] = start + i;
-            return arr;
-        } else if (portRange.contains(",")) {
-            String[] parts = portRange.split(",");
-            List<Integer> list = new ArrayList<>();
-            for (String p : parts) list.add(Integer.parseInt(p.trim()));
-            return list.stream().mapToInt(Integer::intValue).toArray();
-        } else {
-            return new int[]{Integer.parseInt(portRange.trim())};
-        }
+        return PortRangeParser.parse(portRange);
     }
 }

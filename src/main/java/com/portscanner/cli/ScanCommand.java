@@ -1210,6 +1210,10 @@ public class ScanCommand implements Callable<Integer> {
                         List<ScanResult> openPorts = report.getOpenPorts();
                         if (openPorts != null) {
                             for (ScanResult r : openPorts) {
+                                // Skip non-HTTP ports to avoid long timeouts on SSH/FTP/SMTP/etc.
+                                if (r.getHttpInfo() == null
+                                        && !"HTTP".equalsIgnoreCase(r.getServiceName())
+                                        && !"HTTPS".equalsIgnoreCase(r.getServiceName())) continue;
                                 List<NucleiResult> findings = runner.run(
                                         report.getResolvedIp() != null ? report.getResolvedIp() : host, r, templates);
                                 if (!findings.isEmpty()) {

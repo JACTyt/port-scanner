@@ -43,7 +43,7 @@ public class NucleiRunner {
      */
     public List<NucleiResult> run(String host, ScanResult result, List<NucleiTemplate> templates) {
         List<NucleiResult> findings = new ArrayList<>();
-        String protocol = result.getPort() == 443 || result.getPort() == 8443 ? "https" : "http";
+        String protocol = result.getTlsInfo() != null ? "https" : "http";
         String baseUrl = protocol + "://" + host + ":" + result.getPort();
 
         for (NucleiTemplate template : templates) {

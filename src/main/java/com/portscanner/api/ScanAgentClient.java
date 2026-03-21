@@ -100,12 +100,11 @@ public class ScanAgentClient {
 
     private void heartbeat() {
         try {
-            HttpRequest req = HttpRequest.newBuilder()
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(coordinatorUrl + "/agent/heartbeat"))
-                    .header("Authorization", "Bearer " + token)
-                    .PUT(HttpRequest.BodyPublishers.noBody())
-                    .build();
-            http.send(req, HttpResponse.BodyHandlers.discarding());
+                    .PUT(HttpRequest.BodyPublishers.noBody());
+            if (token != null) builder.header("Authorization", "Bearer " + token);
+            http.send(builder.build(), HttpResponse.BodyHandlers.discarding());
         } catch (Exception e) {
             log.debug("Heartbeat failed: {}", e.getMessage());
         }
@@ -116,8 +115,7 @@ public class ScanAgentClient {
         int threads = item.getThreads() > 0 ? item.getThreads() : 100;
         String portsStr = item.getPorts() != null ? item.getPorts() : "1-1024";
 
-        // Parse port range/list into int[]
-        int[] ports = parsePorts(portsStr);
+        int[] ports = PortRangeParser.parse(portsStr);
 
         ServiceMapper svc = new ServiceMapper();
         PortScanner scanner = new PortScanner(threads, timeout, item.isBanner(), svc);
@@ -125,37 +123,22 @@ public class ScanAgentClient {
         return scanner.scan(item.getTarget(), addr, ports);
     }
 
-    /** Parses "80,443,8080" or "1-1024" into an int[]. */
-    private int[] parsePorts(String spec) {
-        if (spec.contains("-") && !spec.contains(",")) {
-            String[] parts = spec.split("-");
-            int from = Integer.parseInt(parts[0].trim());
-            int to   = Integer.parseInt(parts[1].trim());
-            int[] arr = new int[to - from + 1];
-            for (int i = 0; i < arr.length; i++) arr[i] = from + i;
-            return arr;
-        }
-        return java.util.Arrays.stream(spec.split(","))
-                .mapToInt(p -> Integer.parseInt(p.trim())).toArray();
-    }
-
     private void post(String path, Object body) throws Exception {
         String json = mapper.writeValueAsString(body);
-        HttpRequest req = HttpRequest.newBuilder()
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(coordinatorUrl + path))
-                .header("Authorization", "Bearer " + token)
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json))
-                .build();
-        http.send(req, HttpResponse.BodyHandlers.discarding());
+                .POST(HttpRequest.BodyPublishers.ofString(json));
+        if (token != null) builder.header("Authorization", "Bearer " + token);
+        http.send(builder.build(), HttpResponse.BodyHandlers.discarding());
     }
 
     private HttpResponse<String> get(String path) throws Exception {
-        HttpRequest req = HttpRequest.newBuilder()
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(coordinatorUrl + path))
-                .header("Authorization", "Bearer " + token)
-                .GET().build();
-        return http.send(req, HttpResponse.BodyHandlers.ofString());
+                .GET();
+        if (token != null) builder.header("Authorization", "Bearer " + token);
+        return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     public String getAgentId() { return agentId; }

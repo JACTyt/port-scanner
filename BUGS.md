@@ -126,6 +126,7 @@ Call this instead of `send(ex, 204, "")` in `handleWork`.
 
 ### BUG-11: Agent sends `Authorization: Bearer null` when `--agent-token` is omitted
 
+**Status:** ✅ Fixed
 **Severity:** Important
 **File:** `src/main/java/com/portscanner/api/ScanAgentClient.java` — `post()` and `get()` helpers, `heartbeat()`
 
@@ -141,6 +142,7 @@ Apply to all three request builders in `ScanAgentClient`.
 
 ### BUG-12: Dispatched work items are silently lost if agent crashes
 
+**Status:** ✅ Fixed
 **Severity:** Important
 **File:** `src/main/java/com/portscanner/api/CoordinatorServer.java` — `handleWork()`
 
@@ -154,6 +156,7 @@ Apply to all three request builders in `ScanAgentClient`.
 
 ### BUG-13: `NucleiRunner` attempts HTTP against all open ports, not just web ports
 
+**Status:** ✅ Fixed
 **Severity:** Important
 **File:** `src/main/java/com/portscanner/nuclei/NucleiRunner.java` — `run()` method
 **File:** `src/main/java/com/portscanner/cli/ScanCommand.java` — nuclei execution loop
@@ -173,6 +176,7 @@ for (ScanResult r : openPorts) {
 
 ### BUG-14: `RegexMatcher` recompiles patterns on every invocation (performance + ReDoS risk)
 
+**Status:** ✅ Fixed
 **Severity:** Important
 **File:** `src/main/java/com/portscanner/nuclei/matcher/RegexMatcher.java` — line 14
 
@@ -188,6 +192,7 @@ Pattern p = CACHE.computeIfAbsent(regex, r -> Pattern.compile(r, Pattern.DOTALL)
 
 ### BUG-15: HTTPS port detection hardcoded to 443/8443 — fails on non-standard TLS ports
 
+**Status:** ✅ Fixed
 **Severity:** Important
 **File:** `src/main/java/com/portscanner/nuclei/NucleiRunner.java` — line 46
 
@@ -206,6 +211,7 @@ String protocol = result.getTlsInfo() != null ? "https" : "http";
 
 ### BUG-16: HTTP method not enforced on `GET /agent/work`, `GET /scans`, `PUT /agent/heartbeat`
 
+**Status:** ✅ Fixed
 **Severity:** Important
 **File:** `src/main/java/com/portscanner/api/CoordinatorServer.java` — `handleWork()`, `handleScans()`, `handleHeartbeat()`
 
@@ -220,6 +226,7 @@ if (!"GET".equals(ex.getRequestMethod())) { send(ex, 405, "Method Not Allowed");
 
 ### BUG-17: `parsePorts` duplicated in `ScanAgentClient` without bounds validation
 
+**Status:** ✅ Fixed
 **Severity:** Important
 **File:** `src/main/java/com/portscanner/api/ScanAgentClient.java` — `parsePorts()` (line ~129)
 

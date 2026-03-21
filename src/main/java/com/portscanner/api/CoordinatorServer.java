@@ -42,6 +42,8 @@ public class CoordinatorServer {
     private final Map<String, String> agents = new ConcurrentHashMap<>();
     // work queue
     private final BlockingQueue<WorkItem> workQueue = new LinkedBlockingDeque<>();
+    // items dispatched but not yet confirmed: workId → WorkItem (re-queued on coordinator restart or future timeout logic)
+    private final Map<String, WorkItem> inFlight = new ConcurrentHashMap<>();
     // completed results
     private final List<ScanReport> results = Collections.synchronizedList(new ArrayList<>());
 
@@ -84,10 +86,12 @@ public class CoordinatorServer {
 
     private void handleWork(HttpExchange ex) throws IOException {
         if (!isAuthorized(ex)) { send(ex, 401, "Unauthorized"); return; }
+        if (!"GET".equals(ex.getRequestMethod())) { send(ex, 405, "Method Not Allowed"); return; }
         WorkItem item = workQueue.poll();
         if (item == null) {
             sendNoContent(ex);
         } else {
+            inFlight.put(item.getWorkId(), item);
             send(ex, 200, mapper.writeValueAsString(item));
         }
     }
@@ -96,6 +100,7 @@ public class CoordinatorServer {
         if (!isAuthorized(ex)) { send(ex, 401, "Unauthorized"); return; }
         if (!"POST".equals(ex.getRequestMethod())) { send(ex, 405, "Method Not Allowed"); return; }
         AgentResult result = mapper.readValue(ex.getRequestBody(), AgentResult.class);
+        inFlight.remove(result.getWorkId());
         if (result.getReport() != null) {
             results.add(result.getReport());
             log.info("Received result from agent {} for workId {}", result.getAgentId(), result.getWorkId());
@@ -105,6 +110,7 @@ public class CoordinatorServer {
 
     private void handleHeartbeat(HttpExchange ex) throws IOException {
         if (!isAuthorized(ex)) { send(ex, 401, "Unauthorized"); return; }
+        if (!"PUT".equals(ex.getRequestMethod())) { send(ex, 405, "Method Not Allowed"); return; }
         send(ex, 200, "{\"status\":\"ok\"}");
     }
 
@@ -120,6 +126,7 @@ public class CoordinatorServer {
 
     private void handleScans(HttpExchange ex) throws IOException {
         if (!isAuthorized(ex)) { send(ex, 401, "Unauthorized"); return; }
+        if (!"GET".equals(ex.getRequestMethod())) { send(ex, 405, "Method Not Allowed"); return; }
         List<ScanReport> snapshot = new ArrayList<>(results);
         send(ex, 200, mapper.writeValueAsString(snapshot));
     }
